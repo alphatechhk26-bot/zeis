@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 // ----------------------------------------------------------------------
 // Helpers & Utilities
@@ -342,4 +343,44 @@ export async function assignTeacherToClassSubject(input: z.infer<typeof assignTe
 
   revalidatePath('/admin/assignments');
   return { success: true, message: 'Teacher assigned successfully.' };
+}
+// actions/admin.ts
+
+// ... (your existing code: registerSchool, updateSchool, createStudent, etc.) ...
+
+// ----------------------------------------------------------------------
+// 6. Toggle School Status (Active / Suspended)
+// ----------------------------------------------------------------------
+
+const toggleSchoolStatusSchema = z.object({
+  id: z.string().uuid('Invalid school ID.'),
+  is_active: z.boolean(),
+});
+
+export async function toggleSchoolStatus(input: z.infer<typeof toggleSchoolStatusSchema>) {
+  const { role } = await assertAdmin();
+  
+  if (role !== 'super_admin') {
+    throw new Error('Only super_admin can change school status.');
+  }
+
+  const validated = toggleSchoolStatusSchema.parse(input);
+  // actions/admin.ts
+
+// Change this:
+// const adminClient = createAdminClient();
+
+// To this:
+const adminClient = createAdminClient() as any; // 👈 Explicit cast fixes the 'never' error
+  const { error } = await adminClient
+    .from('schools')
+    .update({ is_active: validated.is_active })
+    .eq('id', validated.id);
+
+  if (error) throw new Error(`Failed to update status: ${error.message}`);
+
+  // Revalidate the path so the UI updates immediately
+  revalidatePath('/dashboard/super-admin/schools');
+  
+  return { success: true };
 }

@@ -1,4 +1,4 @@
-import AdminChart from "./AdminChart";
+import AdminChart from "@/components/dashboard/AdminChart";
 import { createClient } from "@/lib/supabase/server";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -23,24 +23,31 @@ export default async function AdminDashboard() {
     .eq("attendance_date", today)
     .eq("status", "present");
 
-  // Fee collection data
+  // Fee collection data (last 30 days)
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  
   const { data: feeData } = await supabase
     .from("payments")
     .select("amount, payment_date")
-    .gte("payment_date", new Date(new Date().setDate(new Date().getDate() - 30)).toISOString());
+    .gte("payment_date", thirtyDaysAgo.toISOString())
+    .order("payment_date", { ascending: true });
 
-  // Aggregate fee data for chart
-  const chartData = feeData
-    ? feeData
-        .reduce((acc: { date: string; amount: number }[], curr) => {
-          const day = curr.payment_date.split("T")[0];
-          const existing = acc.find((item) => item.date === day);
-          if (existing) existing.amount += curr.amount;
-          else acc.push({ date: day, amount: curr.amount });
-          return acc;
-        }, [])
-        .slice(0, 7)
-    : [];
+  // Aggregate fee data for chart and ensure chronological sorting
+  const aggregatedMap: { [key: string]: number } = {};
+  
+  feeData?.forEach((curr) => {
+    const day = curr.payment_date.split("T")[0];
+    aggregatedMap[day] = (aggregatedMap[day] || 0) + curr.amount;
+  });
+
+  const chartData = Object.keys(aggregatedMap)
+    .sort() // Sort dates chronologically
+    .map((date) => ({
+      date,
+      amount: aggregatedMap[date],
+    }))
+    .slice(-7); // Take the most recent 7 days
 
   return (
     <div className="p-6 space-y-6 bg-gray-950 min-h-screen text-white">

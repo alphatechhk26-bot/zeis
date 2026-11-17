@@ -21,7 +21,7 @@ const PROTECTED_ROUTES: Record<string, string[]> = {
   '/dashboard/parent': ['parent', 'admin', 'super_admin'],
 };
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   // Create a response object to modify cookies
   let response = NextResponse.next({
     request: {
