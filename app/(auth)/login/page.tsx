@@ -1,197 +1,265 @@
-// app/(auth)/login/page.tsx
 'use client';
 
 import { useActionState, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { signIn, resetPassword, type AuthState } from '@/actions/auth';
 import Link from 'next/link';
+import Image from 'next/image';
+import { Eye, EyeOff, Info, LoaderCircle, Mail, ShieldCheck, X } from 'lucide-react';
+import { signIn, type AuthState } from '@/actions/auth';
 
-// ----------------------------------------------------------------------
-// Login Component
-// ----------------------------------------------------------------------
+const HERO_FEATURES = {
+  agent: {
+    label: 'Zanzibar AI Agent',
+    title: 'AI-powered analytics',
+    description:
+      'The Zanzibar AI Agent turns education data into useful signals, helping administrators spot trends and make informed decisions.',
+    position: 'left-[42%] top-[12%]',
+  },
+  zeis: {
+    label: 'ZEIS',
+    title: 'A connected student portal',
+    description:
+      'ZEIS brings learning resources, student progress, and school information together in one accessible digital portal.',
+    position: 'bottom-[17%] left-[34%]',
+  },
+  education: {
+    label: 'Education and Technology',
+    title: 'Smart administration',
+    description:
+      'Integrated education technology helps school teams coordinate services, monitor activity, and support their communities.',
+    position: 'bottom-[31%] right-[12%]',
+  },
+} as const;
+
+type HeroFeatureKey = keyof typeof HERO_FEATURES;
 
 export default function LoginPage() {
-  const router = useRouter();
-  const [isResetMode, setIsResetMode] = useState(false);
-
-  // useActionState returns [state, dispatch, isPending]
+  const [showPassword, setShowPassword] = useState(false);
+  const [activeFeature, setActiveFeature] = useState<HeroFeatureKey | null>(null);
   const [state, dispatch, isPending] = useActionState<AuthState, FormData>(
-    isResetMode ? resetPassword : signIn,
+    signIn,
     { error: undefined, success: false, message: '' }
   );
 
-  // Redirect to dashboard on successful sign‑in
   useEffect(() => {
-    if (state.success && !isResetMode) {
-      router.push('/dashboard');
-    }
-  }, [state.success, isResetMode, router]);
+    if (!activeFeature) return;
 
-  // Toggle between sign‑in and reset password modes
-  const toggleMode = () => {
-    setIsResetMode((prev) => !prev);
-    // Reset the state to clear old messages
-    // (useActionState doesn't provide a direct reset; we'll just let it be)
-  };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setActiveFeature(null);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeFeature]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8">
-        <div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-            {isResetMode ? 'Reset your password' : 'Sign in to your account'}
-          </h2>
-          <p className="mt-2 text-center text-sm text-gray-600">
-            {isResetMode
-              ? 'Enter your email and we\'ll send you a reset link.'
-              : 'Or '}
-            {!isResetMode && (
+    <main className="grid min-h-screen grid-cols-1 bg-slate-950 text-slate-100 lg:grid-cols-2">
+      <aside aria-label="ZEIS AI education portal" className="hidden min-h-screen lg:block">
+        <div className="relative min-h-screen w-full overflow-hidden">
+          <Image
+            src="/ai-bg.png"
+            alt="Zanzibar AI Agent and ZEIS education intelligence system"
+            fill
+            priority
+            sizes="50vw"
+            className="h-full w-full object-cover object-left"
+          />
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 right-0 z-10 w-[30%] bg-gradient-to-l from-slate-950 via-slate-950/50 to-transparent"
+          />
+
+          {(Object.keys(HERO_FEATURES) as HeroFeatureKey[]).map((featureKey) => {
+            const feature = HERO_FEATURES[featureKey];
+            const isActive = activeFeature === featureKey;
+
+            return (
               <button
+                key={featureKey}
                 type="button"
-                onClick={toggleMode}
-                className="font-medium text-indigo-600 hover:text-indigo-500"
+                aria-label={`Learn about ${feature.label}`}
+                aria-controls="login-hero-feature-info"
+                aria-expanded={isActive}
+                onClick={() => setActiveFeature(isActive ? null : featureKey)}
+                className={`group absolute ${feature.position} z-20 flex h-10 w-10 items-center justify-center rounded-full border border-cyan-200/70 bg-slate-950/70 text-cyan-100 shadow-[0_0_20px_rgba(34,211,238,0.3)] backdrop-blur-md transition hover:scale-110 hover:border-cyan-100 hover:bg-cyan-400/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950`}
               >
-                reset your password
+                <span aria-hidden="true" className="absolute inset-0 animate-ping rounded-full border border-cyan-200/40 opacity-50" />
+                <Info aria-hidden="true" className="relative h-4 w-4" />
               </button>
+            );
+          })}
+
+          <section
+            id="login-hero-feature-info"
+            hidden={!activeFeature}
+            aria-live="polite"
+            aria-label="ZEIS feature information"
+            className="absolute inset-x-5 bottom-5 z-30 rounded-2xl border border-cyan-300/25 bg-slate-950/75 p-5 pr-14 shadow-[0_0_36px_rgba(14,165,233,0.16)] backdrop-blur-xl sm:inset-x-8 sm:bottom-8 sm:p-6 sm:pr-16"
+          >
+            {activeFeature && (
+              <>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-cyan-300">
+                  {HERO_FEATURES[activeFeature].label}
+                </p>
+                <h2 className="mt-1 text-lg font-semibold text-white">
+                  {HERO_FEATURES[activeFeature].title}
+                </h2>
+                <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-300">
+                  {HERO_FEATURES[activeFeature].description}
+                </p>
+                <button
+                  type="button"
+                  aria-label="Close feature information"
+                  onClick={() => setActiveFeature(null)}
+                  className="absolute right-3 top-3 rounded-lg p-2 text-slate-400 transition hover:bg-white/10 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200"
+                >
+                  <X aria-hidden="true" className="h-4 w-4" />
+                </button>
+              </>
             )}
-          </p>
+          </section>
         </div>
+      </aside>
 
-        <form className="mt-8 space-y-6" action={dispatch}>
-          {/* Display global error or success message */}
-          {state.error && (
-            <div className="rounded-md bg-red-50 p-4">
-              <p className="text-sm text-red-700">{state.error}</p>
-            </div>
-          )}
-          {state.success && state.message && (
-            <div className="rounded-md bg-green-50 p-4">
-              <p className="text-sm text-green-700">{state.message}</p>
-            </div>
-          )}
+      <section className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-950 px-4 py-12 sm:px-6 lg:px-10 xl:px-14">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 opacity-30"
+          style={{
+            backgroundImage:
+              'linear-gradient(rgba(56,189,248,0.07) 1px, transparent 1px), linear-gradient(90deg, rgba(56,189,248,0.07) 1px, transparent 1px)',
+            backgroundSize: '48px 48px',
+            maskImage: 'linear-gradient(to bottom, black, transparent 85%)',
+          }}
+        />
+        <div aria-hidden="true" className="pointer-events-none absolute -right-32 top-12 h-80 w-80 rounded-full bg-blue-600/20 blur-[120px]" />
+        <div aria-hidden="true" className="pointer-events-none absolute -left-32 bottom-0 h-96 w-96 rounded-full bg-cyan-500/15 blur-[140px]" />
 
-          {isResetMode ? (
-            // Reset password form – only email required
-            <div>
-              <label htmlFor="email" className="sr-only">
+        <section className="relative z-10 w-full max-w-md">
+        <header className="mb-8 text-center lg:hidden">
+          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-cyan-300/30 bg-cyan-400/10 text-2xl font-black text-cyan-200 shadow-[0_0_32px_rgba(34,211,238,0.2)]">
+            Z
+          </div>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.32em] text-cyan-300">
+            AI-Powered Smart Portal
+          </p>
+          <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
+            <span className="bg-gradient-to-r from-cyan-200 via-sky-300 to-blue-400 bg-clip-text text-transparent drop-shadow-[0_0_18px_rgba(56,189,248,0.3)]">
+              ZEIS
+            </span>
+            <span className="text-slate-300"> - Zanzibar Education</span>
+            <span className="block text-slate-300">Intelligence System</span>
+          </h1>
+        </header>
+
+        <div className="rounded-2xl border border-cyan-300/20 bg-slate-900/65 p-6 shadow-[0_0_60px_rgba(14,165,233,0.12)] backdrop-blur-xl sm:p-8">
+          <div className="mb-7">
+            <h2 className="text-xl font-semibold text-white">Sign in to your account</h2>
+            <p className="mt-1 text-sm text-slate-400">Access your intelligent education portal.</p>
+          </div>
+
+          <form action={dispatch} className="space-y-5">
+            {state.error && (
+              <div
+                role="alert"
+                className="rounded-lg border border-rose-400/30 bg-rose-950/50 px-4 py-3 text-sm text-rose-200"
+              >
+                {state.error}
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <label htmlFor="email" className="block text-sm font-medium text-slate-300">
                 Email address
               </label>
-              <input
-                id="email"
-                name="email"
-                type="email"
-                autoComplete="email"
-                required
-                className="appearance-none rounded-md relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
-                placeholder="Email address"
-              />
+              <div className="relative">
+                <Mail aria-hidden="true" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                <input
+                  id="email"
+                  name="email"
+                  type="email"
+                  autoComplete="email"
+                  required
+                  placeholder="you@example.com"
+                  className="w-full rounded-lg border border-slate-700/80 bg-slate-950/70 py-3 pl-10 pr-4 text-sm text-white placeholder:text-slate-600 outline-none transition focus:border-cyan-400/70 focus:ring-2 focus:ring-cyan-400/30"
+                />
+              </div>
             </div>
-          ) : (
-            // Sign‑in form – email + password
-            <>
-              <div className="rounded-md shadow-sm -space-y-px">
-                <div>
-                  <label htmlFor="email" className="sr-only">
-                    Email address
-                  </label>
-                  <input
-                    id="email"
-                    name="email"
-                    type="email"
-                    autoComplete="email"
-                    required
-                    className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
-                    placeholder="Email address"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="password" className="sr-only">
-                    Password
-                  </label>
-                  <input
-                    id="password"
-                    name="password"
-                    type="password"
-                    autoComplete="current-password"
-                    required
-                    className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
-                    placeholder="Password"
-                  />
-                </div>
+
+            <div className="space-y-2">
+              <label htmlFor="password" className="block text-sm font-medium text-slate-300">
+                Password
+              </label>
+              <div className="relative">
+                <ShieldCheck aria-hidden="true" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                <input
+                  id="password"
+                  name="password"
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  required
+                  placeholder="Enter your password"
+                  className="w-full rounded-lg border border-slate-700/80 bg-slate-950/70 py-3 pl-10 pr-12 text-sm text-white placeholder:text-slate-600 outline-none transition focus:border-cyan-400/70 focus:ring-2 focus:ring-cyan-400/30"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((visible) => !visible)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-pressed={showPassword}
+                  className="absolute inset-y-0 right-0 flex items-center px-3.5 text-slate-500 transition hover:text-cyan-200 focus:outline-none focus-visible:text-cyan-200"
+                >
+                  {showPassword ? (
+                    <EyeOff aria-hidden="true" className="h-4 w-4" />
+                  ) : (
+                    <Eye aria-hidden="true" className="h-4 w-4" />
+                  )}
+                </button>
               </div>
+            </div>
 
-              <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  <input
-                    id="remember-me"
-                    name="remember-me"
-                    type="checkbox"
-                    className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                  />
-                  <label htmlFor="remember-me" className="ml-2 block text-sm text-gray-900">
-                    Remember me
-                  </label>
-                </div>
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <label htmlFor="remember-me" className="flex cursor-pointer items-center gap-2 text-slate-400">
+                <input
+                  id="remember-me"
+                  name="remember-me"
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-slate-600 bg-slate-950 text-cyan-400 focus:ring-2 focus:ring-cyan-400/40 focus:ring-offset-0"
+                />
+                Remember me
+              </label>
+              <Link
+                href="/update-password"
+                className="font-medium text-cyan-300 transition hover:text-cyan-200 hover:drop-shadow-[0_0_8px_rgba(103,232,249,0.65)]"
+              >
+                Forgot password?
+              </Link>
+            </div>
 
-                <div className="text-sm">
-                  <button
-                    type="button"
-                    onClick={toggleMode}
-                    className="font-medium text-indigo-600 hover:text-indigo-500"
-                  >
-                    Forgot your password?
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
-
-          <div>
             <button
               type="submit"
               disabled={isPending}
-              className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="group relative flex w-full items-center justify-center gap-2 overflow-hidden rounded-lg border border-cyan-300/40 bg-gradient-to-r from-blue-600 to-cyan-500 px-4 py-3 text-sm font-bold text-white shadow-[0_0_24px_rgba(14,165,233,0.28)] transition hover:shadow-[0_0_34px_rgba(34,211,238,0.48)] focus:outline-none focus:ring-2 focus:ring-cyan-300 focus:ring-offset-2 focus:ring-offset-slate-950 disabled:cursor-not-allowed disabled:opacity-70"
             >
-              {isPending ? (
-                <>
-                  <svg
-                    className="animate-spin -ml-1 mr-3 h-5 w-5 text-white"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    ></circle>
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    ></path>
-                  </svg>
-                  {isResetMode ? 'Sending...' : 'Signing in...'}
-                </>
-              ) : (
-                isResetMode ? 'Send reset link' : 'Sign in'
-              )}
+              {isPending && <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />}
+              {isPending ? 'Signing in...' : 'Sign in'}
             </button>
-          </div>
+          </form>
 
-          {/* Optional: link to sign up page */}
-          {!isResetMode && (
-            <div className="text-sm text-center">
-              <Link href="/signup" className="font-medium text-indigo-600 hover:text-indigo-500">
-                Don't have an account? Sign up
-              </Link>
-            </div>
-          )}
-        </form>
-      </div>
-    </div>
+          <p className="mt-6 border-t border-slate-700/70 pt-5 text-center text-sm text-slate-400">
+            New to ZEIS?{' '}
+            <Link
+              href="/sign-up"
+              className="font-semibold text-cyan-300 transition hover:text-cyan-200 hover:drop-shadow-[0_0_8px_rgba(103,232,249,0.65)]"
+            >
+              Create an account
+            </Link>
+          </p>
+        </div>
+
+        <p className="mt-6 text-center text-xs tracking-wide text-slate-600">
+          SECURE ACCESS <span className="px-1 text-cyan-700">/</span> ZEIS INTELLIGENCE NETWORK
+        </p>
+      </section>
+      </section>
+    </main>
   );
 }

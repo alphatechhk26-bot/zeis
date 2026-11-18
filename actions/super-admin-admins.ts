@@ -4,6 +4,13 @@ import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminSupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/types/zeis';
+// Helper function to create the admin client
+function createAdminClient() {
+  return createAdminSupabaseClient<Database>(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+}
 
 // ---------------------------------------------------------------------------
 // RBAC guard — every action must pass this
@@ -90,7 +97,7 @@ export async function updateAdminRole(input: z.infer<typeof updateRoleSchema>) {
   }
 
   // A super_admin should not be tied to a school
-  const updates: Record<string, unknown> = { role: newRole };
+  const updates: Database['public']['Tables']['profiles']['Update'] = { role: newRole };
   if (newRole === 'super_admin') {
     updates.school_id = null;
   }

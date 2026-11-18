@@ -50,10 +50,23 @@ export async function signIn(prevState: AuthState, formData: FormData): Promise<
     return { error: error.message };
   }
 
-  // On success, revalidate the layout and redirect (handled client‑side)
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', data.user.id)
+    .single();
+
+  if (profileError || !profile) {
+    const { error: signOutError } = await supabase.auth.signOut();
+    return {
+      error: signOutError
+        ? 'Unable to load your account profile or end the session. Please try again.'
+        : 'Unable to load your account profile. Please contact support.',
+    };
+  }
+
   revalidatePath('/dashboard', 'layout');
-  // We return a success state; the client will redirect using useRouter.
-  return { success: true, message: 'Signed in successfully.' };
+  redirect(profile.role === 'super_admin' ? '/dashboard/super-admin' : '/dashboard');
 }
 
 // ----------------------------------------------------------------------

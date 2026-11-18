@@ -1,11 +1,17 @@
 import AdminChart from "@/components/dashboard/AdminChart";
 import { createClient } from "@/lib/supabase/server";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SuperAdminOverviewGrid } from "@/components/super-admin/super-admin-overview-grid";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminDashboard() {
   const supabase = await createClient();
+
+  const { count: activeSchoolCount, error: activeSchoolsError } = await supabase
+    .from("schools")
+    .select("id", { count: "exact", head: true })
+    .eq("is_active", true);
 
   // Fetch real counts
   const { count: studentCount } = await supabase
@@ -53,6 +59,12 @@ export default async function AdminDashboard() {
     <div className="p-6 space-y-6 bg-gray-950 min-h-screen text-white">
       <h1 className="text-3xl font-bold">Admin Dashboard</h1>
       <p className="text-gray-400">Welcome back! Here is your real-time school overview.</p>
+
+      <SuperAdminOverviewGrid
+        activeSchools={activeSchoolCount || 0}
+        enrollment={studentCount || 0}
+        supabaseOnline={!activeSchoolsError}
+      />
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">

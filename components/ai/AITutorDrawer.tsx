@@ -56,7 +56,7 @@ interface Message {
 
 interface Conversation {
   id: string;
-  title: string;
+  title: string | null;
   created_at: string;
 }
 
@@ -105,7 +105,8 @@ export default function AITutorDrawer() {
           .select('id, school_id')
           .eq('id', user.id)
           .single();
-        if (profile) setProfile(profile);
+        const schoolId = profile?.school_id;
+        if (profile && schoolId) setProfile({ id: profile.id, school_id: schoolId });
       }
     }
     loadUser();
@@ -150,6 +151,8 @@ export default function AITutorDrawer() {
   // On open, fetch history and load latest conversation if exists
   useEffect(() => {
     if (isOpen) {
+      // This effect intentionally starts async loading when the drawer opens.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       fetchConversations();
       // Load the most recent conversation, if any
       if (conversations.length > 0 && !currentConversationId) {
@@ -157,6 +160,18 @@ export default function AITutorDrawer() {
       }
     }
   }, [isOpen, fetchConversations, loadConversation, conversations, currentConversationId]);
+
+  useEffect(() => {
+    const handleAssistantRequest = (event: Event) => {
+      const { prompt } = (event as CustomEvent<{ prompt?: string }>).detail ?? {};
+      if (prompt) setInput(prompt);
+      setIsOpen(true);
+      setTimeout(() => inputRef.current?.focus(), 300);
+    };
+
+    window.addEventListener('zeis:open-ai-assistant', handleAssistantRequest);
+    return () => window.removeEventListener('zeis:open-ai-assistant', handleAssistantRequest);
+  }, []);
 
   // Handle sending message
   const sendMessage = useCallback(async () => {
@@ -202,7 +217,7 @@ export default function AITutorDrawer() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let assistantContent = '';
-      let assistantMessageId = Date.now() + 1;
+      const assistantMessageId = Date.now() + 1;
 
       // Add placeholder for assistant message
       setMessages((prev) => [

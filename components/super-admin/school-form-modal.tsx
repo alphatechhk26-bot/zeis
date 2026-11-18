@@ -31,11 +31,13 @@ export function SchoolFormModal({ isOpen, onClose, initialData }: Props) {
     if (isOpen) {
       if (initialData) {
         const branding = (initialData.branding as Record<string, any>) || {};
+        // This effect intentionally resets the form when its source data changes.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setFormData({
           name: initialData.name,
           slug: initialData.slug,
           logoUrl: branding.logo_url || '',
-          is_active: initialData.is_active,
+          is_active: initialData.is_active ?? true,
         });
       } else {
         setFormData({ name: '', slug: '', logoUrl: '', is_active: true });

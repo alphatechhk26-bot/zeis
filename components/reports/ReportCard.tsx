@@ -128,7 +128,7 @@ const ReportCard = forwardRef<HTMLDivElement, ReportCardProps>(
 
         {/* Teacher comments */}
         <div className="mt-6 border-t border-gray-300 pt-4">
-          <h3 className="text-sm font-semibold text-gray-600">Teacher's Comments</h3>
+          <h3 className="text-sm font-semibold text-gray-600">Teacher&apos;s Comments</h3>
           <p className="text-sm text-gray-700 italic mt-1">
             {student?.full_name} has shown consistent effort this term. Continue to focus on mathematics and science to improve overall performance.
           </p>

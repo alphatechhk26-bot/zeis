@@ -97,7 +97,9 @@ export default function DashboardLayout({
   const pathname = usePathname();
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [mobileSidebar, setMobileSidebar] = useState({ pathname, open: false });
+  const mobileSidebarOpen = mobileSidebar.pathname === pathname && mobileSidebar.open;
+  const setMobileSidebarOpen = (open: boolean) => setMobileSidebar({ pathname, open });
   const [user, setUser] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
   const [schools, setSchools] = useState<any[]>([]);
@@ -178,10 +180,6 @@ export default function DashboardLayout({
     if (!profile || !profile.role) return [];
     return NAV_ITEMS[profile.role as UserRole] || [];
   }, [profile]);
-
-  useEffect(() => {
-    setMobileSidebarOpen(false);
-  }, [pathname]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
