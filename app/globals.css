@@ -129,3 +129,254 @@
     @apply bg-background text-foreground;
   }
 }
+
+.landing-shell {
+  isolation: isolate;
+  background:
+    radial-gradient(ellipse at 5% 8%, rgb(10 34 62 / 55%), transparent 42%),
+    radial-gradient(ellipse at 92% 78%, rgb(30 20 65 / 34%), transparent 38%),
+    #060b16;
+}
+
+.landing-grid {
+  z-index: -1;
+  opacity: 0.14;
+  background-image:
+    linear-gradient(rgb(84 190 255 / 10%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(84 190 255 / 10%) 1px, transparent 1px);
+  background-size: 58px 58px;
+  mask-image: linear-gradient(to bottom, black, transparent 90%);
+}
+
+.landing-orb {
+  z-index: -1;
+  height: 24rem;
+  width: 24rem;
+  border-radius: 9999px;
+  filter: blur(115px);
+  opacity: 0.16;
+  animation: zeis-float 12s ease-in-out infinite alternate;
+}
+
+.landing-orb-blue {
+  left: -12rem;
+  top: 16rem;
+  background: #00c8ff;
+}
+
+.landing-orb-violet {
+  right: -13rem;
+  bottom: 4rem;
+  background: #8d5cff;
+  animation-delay: -5s;
+}
+
+.brand-mark {
+  display: grid;
+  height: 2.7rem;
+  width: 2.7rem;
+  place-items: center;
+  border: 1px solid rgb(103 232 249 / 36%);
+  border-radius: 0.9rem;
+  background: linear-gradient(145deg, rgb(34 211 238 / 18%), rgb(59 130 246 / 9%));
+  box-shadow: 0 0 28px rgb(34 211 238 / 13%), inset 0 0 18px rgb(34 211 238 / 7%);
+  color: #a5f3fc;
+  font-size: 1.2rem;
+  font-weight: 800;
+  transition: box-shadow 180ms ease, transform 180ms ease;
+}
+
+.group:hover .brand-mark {
+  transform: translateY(-1px);
+  box-shadow: 0 0 34px rgb(34 211 238 / 24%), inset 0 0 18px rgb(34 211 238 / 10%);
+}
+
+.nav-link {
+  border-radius: 0.75rem;
+  padding: 0.65rem 0.8rem;
+  color: #aab6c9;
+  font-size: 0.78rem;
+  transition: color 160ms ease, background 160ms ease;
+}
+
+.nav-link:hover,
+.nav-link:focus-visible {
+  background: rgb(255 255 255 / 5%);
+  color: #a5f3fc;
+}
+
+.nav-agent,
+.nav-join,
+.primary-cta,
+.secondary-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  border-radius: 0.85rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease, background 180ms ease;
+}
+
+.nav-agent {
+  border: 1px solid rgb(103 232 249 / 20%);
+  padding: 0.65rem 0.9rem;
+  color: #a5f3fc;
+}
+
+.nav-agent:hover {
+  border-color: rgb(103 232 249 / 52%);
+  background: rgb(34 211 238 / 8%);
+}
+
+.nav-join {
+  background: linear-gradient(110deg, #22d3ee, #60a5fa);
+  padding: 0.7rem 0.95rem;
+  color: #07111f;
+}
+
+.hero-portrait {
+  border: 1px solid rgb(148 163 184 / 8%);
+  mask-image: linear-gradient(to right, black 68%, transparent 100%);
+}
+
+.hero-portrait img {
+  transform: scale(1.55);
+  transform-origin: center;
+}
+
+.hero-gradient {
+  background: linear-gradient(100deg, #a5f3fc 5%, #67e8f9 36%, #a78bfa 82%);
+  background-clip: text;
+  color: transparent;
+}
+
+.status-dot {
+  height: 0.42rem;
+  width: 0.42rem;
+  border-radius: 9999px;
+  background: #67e8f9;
+  box-shadow: 0 0 11px rgb(103 232 249 / 85%);
+  animation: zeis-pulse 2.3s ease-in-out infinite;
+}
+
+.primary-cta {
+  min-height: 2.9rem;
+  border: 1px solid rgb(165 243 252 / 45%);
+  background: linear-gradient(105deg, #0891b2, #2563eb 80%);
+  padding: 0.75rem 1rem;
+  color: white;
+  box-shadow: 0 8px 26px rgb(14 165 233 / 18%);
+}
+
+.primary-cta:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 32px rgb(34 211 238 / 30%);
+}
+
+.secondary-cta {
+  min-height: 2.9rem;
+  border: 1px solid rgb(148 163 184 / 22%);
+  background: rgb(15 23 42 / 42%);
+  padding: 0.75rem 1rem;
+  color: #dbeafe;
+}
+
+.secondary-cta:hover {
+  border-color: rgb(103 232 249 / 42%);
+  background: rgb(34 211 238 / 7%);
+}
+
+.auth-panel {
+  border: 1px solid rgb(103 232 249 / 18%);
+  background: linear-gradient(145deg, rgb(15 25 43 / 94%), rgb(8 15 28 / 91%));
+  box-shadow: 0 24px 80px rgb(0 0 0 / 35%), 0 0 50px rgb(14 165 233 / 9%), inset 0 1px rgb(255 255 255 / 5%);
+  backdrop-filter: blur(22px);
+}
+
+.auth-panel-glow {
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
+  background: linear-gradient(145deg, rgb(34 211 238 / 12%), transparent 34%, rgb(139 92 246 / 10%));
+  opacity: 0.8;
+  pointer-events: none;
+}
+
+.auth-input {
+  width: 100%;
+  min-height: 2.9rem;
+  border: 1px solid rgb(148 163 184 / 18%);
+  border-radius: 0.75rem;
+  background: rgb(2 6 23 / 58%);
+  padding-block: 0.7rem;
+  color: white;
+  font-size: 0.82rem;
+  outline: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.auth-input::placeholder {
+  color: #64748b;
+}
+
+.auth-input:focus {
+  border-color: rgb(34 211 238 / 72%);
+  box-shadow: 0 0 0 3px rgb(34 211 238 / 12%);
+}
+
+.pillar-card {
+  display: block;
+  min-height: 8.6rem;
+  border: 1px solid rgb(148 163 184 / 12%);
+  border-radius: 1.15rem;
+  background: linear-gradient(140deg, rgb(15 23 42 / 75%), rgb(8 15 28 / 73%));
+  padding: 1rem 1.1rem;
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease, background 180ms ease;
+}
+
+.pillar-card:hover,
+.pillar-card:focus-visible {
+  transform: translateY(-3px);
+  border-color: rgb(103 232 249 / 40%);
+  background: linear-gradient(140deg, rgb(17 38 57 / 88%), rgb(12 17 37 / 86%));
+  box-shadow: 0 12px 34px rgb(0 0 0 / 22%), 0 0 22px rgb(34 211 238 / 8%);
+}
+
+.pillar-icon {
+  display: grid;
+  height: 2.1rem;
+  width: 2.1rem;
+  place-items: center;
+  border: 1px solid rgb(103 232 249 / 18%);
+  border-radius: 0.7rem;
+  background: rgb(34 211 238 / 8%);
+  color: #67e8f9;
+  transition: color 180ms ease, background 180ms ease;
+}
+
+.pillar-card:hover .pillar-icon {
+  background: rgb(34 211 238 / 15%);
+  color: #cffafe;
+}
+
+@keyframes zeis-float {
+  from { transform: translate3d(0, -8px, 0) scale(0.96); }
+  to { transform: translate3d(16px, 12px, 0) scale(1.05); }
+}
+
+@keyframes zeis-pulse {
+  50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

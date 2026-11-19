@@ -3,8 +3,8 @@
 
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
+import { headers } from 'next/headers';
 import { createClient } from '@/lib/supabase/server';
-import type { Database } from '@/types/zeis';
 
 // ----------------------------------------------------------------------
 // Types
@@ -17,29 +17,21 @@ export type AuthState = {
 };
 
 // ----------------------------------------------------------------------
-// Helper: extract user metadata from form data
-// ----------------------------------------------------------------------
-
-function getMetadata(formData: FormData): Partial<Database['public']['Tables']['profiles']['Insert']> {
-  return {
-    full_name: (formData.get('full_name') as string) || null,
-    // Add other fields if needed (e.g., avatar_url, role)
-  };
-}
-
-// ----------------------------------------------------------------------
 // Sign In
 // ----------------------------------------------------------------------
 
 export async function signIn(prevState: AuthState, formData: FormData): Promise<AuthState> {
-  const email = formData.get('email') as string;
-  const password = formData.get('password') as string;
+  const email = String(formData.get('email') ?? '').trim().toLowerCase();
+  const password = String(formData.get('password') ?? '');
 
   if (!email || !password) {
     return { error: 'Email and password are required.' };
   }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return { error: 'Enter a valid email address.' };
+  }
 
-  const supabase = await createClient();
+  const supabase = await createClient({ rememberMe: formData.get('remember-me') === 'on' });
 
   const { data, error } = await supabase.auth.signInWithPassword({
     email,
@@ -47,6 +39,12 @@ export async function signIn(prevState: AuthState, formData: FormData): Promise<
   });
 
   if (error) {
+    if (/email not confirmed/i.test(error.message)) {
+      return { error: 'Please confirm your email address using the link we sent before signing in.' };
+    }
+    if (/invalid login credentials/i.test(error.message)) {
+      return { error: 'The email or password is incorrect. Please try again.' };
+    }
     return { error: error.message };
   }
 
@@ -66,7 +64,19 @@ export async function signIn(prevState: AuthState, formData: FormData): Promise<
   }
 
   revalidatePath('/dashboard', 'layout');
-  redirect(profile.role === 'super_admin' ? '/dashboard/super-admin' : '/dashboard');
+  const requestedPath = String(formData.get('redirectedFrom') ?? '');
+  const safeRequestedPath =
+    requestedPath.startsWith('/') && !requestedPath.startsWith('//') && !requestedPath.includes('\\')
+      ? requestedPath
+      : '';
+  const roleDashboard = {
+    super_admin: '/dashboard/super-admin',
+    admin: '/dashboard/admin',
+    teacher: '/dashboard/teacher',
+    student: '/dashboard/student',
+    parent: '/dashboard/parent',
+  } as const;
+  redirect(safeRequestedPath || roleDashboard[profile.role]);
 }
 
 // ----------------------------------------------------------------------
@@ -85,7 +95,7 @@ export async function signUp(prevState: AuthState, formData: FormData): Promise<
   const supabase = await createClient();
 
   // Include user metadata (will be used by the trigger to create profile)
-  const { data, error } = await supabase.auth.signUp({
+  const { error } = await supabase.auth.signUp({
     email,
     password,
     options: {
@@ -125,16 +135,27 @@ export async function signOut(): Promise<void> {
 // ----------------------------------------------------------------------
 
 export async function resetPassword(prevState: AuthState, formData: FormData): Promise<AuthState> {
-  const email = formData.get('email') as string;
+  const email = String(formData.get('email') ?? '').trim().toLowerCase();
 
   if (!email) {
     return { error: 'Email is required.' };
   }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return { error: 'Enter a valid email address.' };
+  }
 
   const supabase = await createClient();
+  const requestHeaders = await headers();
+  const configuredOrigin = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/+$/, '');
+  const forwardedHost = requestHeaders.get('x-forwarded-host') ?? requestHeaders.get('host');
+  const origin =
+    configuredOrigin ??
+    (forwardedHost
+      ? `${requestHeaders.get('x-forwarded-proto') ?? 'https'}://${forwardedHost}`
+      : 'http://localhost:3000');
 
   const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/auth/update-password`,
+    redirectTo: `${origin}/auth/update-password`,
   });
 
   if (error) {

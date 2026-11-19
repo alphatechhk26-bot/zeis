@@ -3,13 +3,14 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import type { Database } from '@/types/zeis';
 
-export async function createClient() {
+export async function createClient(options?: { rememberMe?: boolean }) {
   const cookieStore = await cookies();
 
   return createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      cookieOptions: options?.rememberMe ? { maxAge: 60 * 60 * 24 * 30 } : undefined,
       cookies: {
         getAll() {
           return cookieStore.getAll();

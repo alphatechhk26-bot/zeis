@@ -22,6 +22,23 @@ export default function SignUpPage() {
     const fullName = String(formData.get('full_name') ?? '').trim();
     const email = String(formData.get('email') ?? '').trim();
     const password = String(formData.get('password') ?? '');
+    const confirmPassword = String(formData.get('confirm_password') ?? '');
+
+    if (!fullName || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setErrorMessage('Enter your full name and a valid email address.');
+      setIsSubmitting(false);
+      return;
+    }
+    if (password.length < 8) {
+      setErrorMessage('Choose a password with at least 8 characters.');
+      setIsSubmitting(false);
+      return;
+    }
+    if (password !== confirmPassword) {
+      setErrorMessage('The passwords do not match.');
+      setIsSubmitting(false);
+      return;
+    }
 
     try {
       const supabase = createClient();
@@ -164,34 +181,21 @@ export default function SignUpPage() {
             </div>
 
             <div className="space-y-2">
-              <label htmlFor="password" className="block text-sm font-medium text-slate-300">
-                Password
-              </label>
+              <label htmlFor="password" className="block text-sm font-medium text-slate-300">Password</label>
               <div className="relative">
                 <LockKeyhole aria-hidden="true" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-                <input
-                  id="password"
-                  name="password"
-                  type={showPassword ? 'text' : 'password'}
-                  autoComplete="new-password"
-                  required
-                  minLength={6}
-                  placeholder="Create a password"
-                  className="w-full rounded-lg border border-slate-700/80 bg-slate-950/70 py-3 pl-10 pr-12 text-sm text-white placeholder:text-slate-600 outline-none transition focus:border-cyan-400/70 focus:ring-2 focus:ring-cyan-400/30"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((visible) => !visible)}
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  aria-pressed={showPassword}
-                  className="absolute inset-y-0 right-0 flex items-center px-3.5 text-slate-500 transition hover:text-cyan-200 focus:outline-none focus-visible:text-cyan-200"
-                >
-                  {showPassword ? (
-                    <EyeOff aria-hidden="true" className="h-4 w-4" />
-                  ) : (
-                    <Eye aria-hidden="true" className="h-4 w-4" />
-                  )}
+                <input id="password" name="password" type={showPassword ? 'text' : 'password'} autoComplete="new-password" required minLength={8} placeholder="At least 8 characters" className="w-full rounded-lg border border-slate-700/80 bg-slate-950/70 py-3 pl-10 pr-12 text-sm text-white placeholder:text-slate-600 outline-none transition focus:border-cyan-400/70 focus:ring-2 focus:ring-cyan-400/30" />
+                <button type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} className="absolute inset-y-0 right-0 flex items-center px-3.5 text-slate-500 transition hover:text-cyan-200 focus:outline-none focus-visible:text-cyan-200">
+                  {showPassword ? <EyeOff aria-hidden="true" className="h-4 w-4" /> : <Eye aria-hidden="true" className="h-4 w-4" />}
                 </button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="confirm_password" className="block text-sm font-medium text-slate-300">Confirm password</label>
+              <div className="relative">
+                <LockKeyhole aria-hidden="true" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                <input id="confirm_password" name="confirm_password" type={showPassword ? 'text' : 'password'} autoComplete="new-password" required minLength={8} placeholder="Enter your password again" className="w-full rounded-lg border border-slate-700/80 bg-slate-950/70 py-3 pl-10 pr-4 text-sm text-white placeholder:text-slate-600 outline-none transition focus:border-cyan-400/70 focus:ring-2 focus:ring-cyan-400/30" />
               </div>
             </div>
 
