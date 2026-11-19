@@ -1,6 +1,10 @@
 // middleware.ts
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+import {
+  getSupabaseProxyCredentials,
+  warnIfSupabaseProxyCredentialsMissing,
+} from '@/lib/supabase/proxy';
 import type { Database } from '@/types/zeis';
 
 // Role-to-path mapping for dashboards
@@ -29,10 +33,15 @@ export async function proxy(request: NextRequest) {
     },
   });
 
+  const { url, anonKey } = getSupabaseProxyCredentials();
+  if (warnIfSupabaseProxyCredentialsMissing(url, anonKey)) {
+    return response;
+  }
+
   // Create a Supabase client with cookie handling
   const supabase = createServerClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    url,
+    anonKey,
     {
       cookies: {
         getAll() {
