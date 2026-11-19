@@ -85,9 +85,6 @@ const NAV_ITEMS: Record<UserRole, NavItem[]> = {
   ],
 };
 
-// Initialize Supabase client outside component to prevent re-creation
-const supabase = createClient();
-
 export default function DashboardLayout({
   children,
 }: {
@@ -116,6 +113,7 @@ export default function DashboardLayout({
   useEffect(() => {
     async function loadUser() {
       try {
+        const supabase = createClient();
         const { data: { user }, error: userError } = await supabase.auth.getUser();
         if (userError || !user) {
           router.push('/login');
@@ -193,6 +191,7 @@ export default function DashboardLayout({
   }, []);
 
   const handleSignOut = async () => {
+    const supabase = createClient();
     await supabase.auth.signOut();
     router.push('/login');
   };

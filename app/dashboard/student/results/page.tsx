@@ -120,7 +120,6 @@ const COMMAND_REGISTRY: Record<string, (args: string[], data: any) => CommandRes
 // --------------------------------------------------------------------------
 export default function StudentResultsPage() {
   const router = useRouter();
-  const supabase = createClient();
 
   // State
   const [profile, setProfile] = useState<StudentProfile | null>(null);
@@ -143,6 +142,7 @@ export default function StudentResultsPage() {
   useEffect(() => {
     async function fetchData() {
       try {
+        const supabase = createClient();
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) {
           router.push('/login');
@@ -318,7 +318,7 @@ if (!attError && attendanceData) {
     }
 
     fetchData();
-  }, [router, supabase]);
+  }, [router]);
 
   // Compute GPA
   const overallGPA = useMemo(() => {

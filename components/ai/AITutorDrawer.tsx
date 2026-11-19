@@ -90,12 +90,15 @@ export default function AITutorDrawer() {
   const [user, setUser] = useState<any>(null);
   const [profile, setProfile] = useState<{ id: string; school_id: string } | null>(null);
 
-  const supabase = createClient();
+  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // Load user and profile
   useEffect(() => {
+    const supabase = createClient();
+    supabaseRef.current = supabase;
+
     async function loadUser() {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
@@ -110,11 +113,12 @@ export default function AITutorDrawer() {
       }
     }
     loadUser();
-  }, [supabase]);
+  }, []);
 
   // Fetch conversation history
   const fetchConversations = useCallback(async () => {
-    if (!user) return;
+    const supabase = supabaseRef.current;
+    if (!user || !supabase) return;
     setLoadingHistory(true);
     const { data, error } = await supabase
       .from('ai_conversations')
@@ -125,11 +129,12 @@ export default function AITutorDrawer() {
       setConversations(data);
     }
     setLoadingHistory(false);
-  }, [user, supabase]);
+  }, [user]);
 
   // Load messages for a conversation
   const loadConversation = useCallback(async (convId: string) => {
-    if (!convId) return;
+    const supabase = supabaseRef.current;
+    if (!convId || !supabase) return;
     const { data, error } = await supabase
       .from('ai_messages')
       .select('id, role, content, created_at')
@@ -139,7 +144,7 @@ export default function AITutorDrawer() {
       setMessages(data as Message[]);
       setCurrentConversationId(convId);
     }
-  }, [supabase]);
+  }, []);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -280,7 +285,7 @@ export default function AITutorDrawer() {
     } finally {
       setIsStreaming(false);
     }
-  }, [input, isStreaming, user, profile, activeMode, context, currentConversationId, supabase, fetchConversations]);
+  }, [input, isStreaming, user, profile, activeMode, context, currentConversationId, fetchConversations]);
 
   // Handle keyboard shortcuts
   const handleKeyDown = (e: React.KeyboardEvent) => {

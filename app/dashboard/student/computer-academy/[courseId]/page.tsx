@@ -1,7 +1,7 @@
 // app/dashboard/student/computer-academy/[courseId]/page.tsx
 'use client';
 import { useAIContext } from '@/contexts/AIContext';
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/lib/supabase/client';
@@ -37,7 +37,7 @@ export default function ComputerCoursePage() {
   const params = useParams();
   const courseId = params.courseId as string;
 
-  const supabase = createClient();
+  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
 
   // State
   const [course, setCourse] = useState<Course | null>(null);
@@ -60,6 +60,8 @@ export default function ComputerCoursePage() {
   useEffect(() => {
     async function fetchData() {
       try {
+        const supabase = createClient();
+        supabaseRef.current = supabase;
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return;
         setUser(user);
@@ -120,7 +122,7 @@ export default function ComputerCoursePage() {
       }
     }
     fetchData();
-  }, [courseId, supabase]);
+  }, [courseId]);
 
   // Compute progress percentage
   const progressPercentage = useMemo(() => {
@@ -133,7 +135,8 @@ export default function ComputerCoursePage() {
 
   // Toggle lesson completion
   const toggleLessonComplete = useCallback(async (lessonId: string) => {
-    if (!user) return;
+    const supabase = supabaseRef.current;
+    if (!user || !supabase) return;
     const existing = progress.find(p => p.lesson_id === lessonId);
     const completed = existing ? !existing.completed : true;
 
@@ -158,7 +161,7 @@ export default function ComputerCoursePage() {
       }
       return filtered;
     });
-  }, [user, supabase]);
+  }, [user]);
 
   // Run code (simplified JavaScript sandbox)
   const runCode = useCallback(() => {
@@ -178,7 +181,8 @@ export default function ComputerCoursePage() {
   // Quiz submission handler
   // Quiz submission handler
   const submitQuiz = useCallback(async () => {
-    if (!user || !selectedLesson) return;
+    const supabase = supabaseRef.current;
+    if (!user || !selectedLesson || !supabase) return;
     // Find quiz for this lesson (if any)
     const quiz: any = quizzes.find((q: any) => q.lesson_id === selectedLesson.id);
     if (!quiz) return;
@@ -243,7 +247,7 @@ export default function ComputerCoursePage() {
     // Show feedback (could set a state)
     alert(`Quiz submitted! Your score: ${scorePercent}%`);
     setShowQuiz(false);
-  }, [user, selectedLesson, quizzes, quizResponses, supabase]);
+  }, [user, selectedLesson, quizzes, quizResponses]);
 
   // Render
   if (loading) {
