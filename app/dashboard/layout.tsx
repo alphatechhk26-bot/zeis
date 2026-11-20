@@ -104,7 +104,7 @@ export default function DashboardLayout({
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedQuery] = useDebounce(searchQuery, 300);
-  const [notifications, setNotifications] = useState<any[]>([]);
+  const [notifications] = useState<any[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
 
@@ -160,10 +160,6 @@ export default function DashboardLayout({
           }
         }
 
-        setNotifications([
-          { id: '1', message: 'New assignment due tomorrow', type: 'info', read: false },
-          { id: '2', message: 'Fee payment pending', type: 'warning', read: false },
-        ]);
       } catch (error) {
         console.error('Error loading user:', error);
       } finally {

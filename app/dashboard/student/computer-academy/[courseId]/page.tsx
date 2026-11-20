@@ -90,7 +90,7 @@ export default function ComputerCoursePage() {
           .from('computer_progress')
           .select('*')
           .eq('student_id', user.id)
-         lessonsData.map((l: any) => l.id)
+          .in('lesson_id', lessonsData.map((lesson) => lesson.id));
         if (progressError) throw progressError;
         setProgress(progressData || []);
 

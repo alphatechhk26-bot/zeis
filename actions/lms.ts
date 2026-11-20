@@ -23,8 +23,7 @@ const lessonProgressSchema = z.object({
 
 const assignmentSubmissionSchema = z.object({
   assignment_id: z.string().uuid(),
-  student_id: z.string().uuid(),
-  submission_text: z.string().optional(),
+  submission_text: z.string().max(10000).optional(),
   file_urls: z.array(z.string().url()).optional(),
 });
 
@@ -161,31 +160,78 @@ export async function recordLessonProgress(input: z.infer<typeof lessonProgressS
 // ----------------------------------------------------------------------
 
 export async function submitAssignment(input: z.infer<typeof assignmentSubmissionSchema>) {
-  const { assignment_id, student_id, submission_text, file_urls } =
+  const { assignment_id, submission_text, file_urls } =
     assignmentSubmissionSchema.parse(input);
 
   const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) throw new Error('Unauthorized');
+
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('role, school_id')
+    .eq('id', user.id)
+    .single();
+
+  if (profileError || !profile || profile.role !== 'student') {
+    throw new Error('Only students can submit assignments.');
+  }
+  if (!profile.school_id) throw new Error('Your account is not assigned to a school.');
+
+  const { data: assignment, error: assignmentError } = await supabase
+    .from('assignments')
+    .select('course_id')
+    .eq('id', assignment_id)
+    .eq('is_published', true)
+    .single();
+
+  if (assignmentError || !assignment?.course_id) {
+    throw new Error('Assignment not found or no longer available.');
+  }
+
+  const { data: course, error: courseError } = await supabase
+    .from('lms_courses')
+    .select('id')
+    .eq('id', assignment.course_id)
+    .eq('school_id', profile.school_id)
+    .eq('is_published', true)
+    .single();
+
+  if (courseError || !course) {
+    throw new Error('Assignment is not available to your school.');
+  }
 
   // Check if submission already exists
-  const { data: existing } = await supabase
+  const { data: existing, error: existingError } = await supabase
     .from('submissions')
     .select('id')
     .eq('assignment_id', assignment_id)
-    .eq('student_id', student_id)
-    .single();
+    .eq('student_id', user.id)
+    .maybeSingle();
+
+  if (existingError) throw new Error(`Failed to check existing submission: ${existingError.message}`);
 
   let result;
   if (existing) {
     // Update existing submission
+    const updates = {
+      submission_text: submission_text || null,
+      submitted_at: new Date().toISOString(),
+      status: 'submitted' as const,
+      grade: null,
+      feedback: null,
+      graded_at: null,
+      ...(file_urls !== undefined ? { file_urls } : {}),
+    };
     const { data, error } = await supabase
       .from('submissions')
-      .update({
-        submission_text: submission_text || null,
-        file_urls: file_urls || null,
-        submitted_at: new Date().toISOString(),
-        status: 'submitted',
-      })
+      .update(updates)
       .eq('id', existing.id)
+      .eq('student_id', user.id)
       .select()
       .single();
 
@@ -197,9 +243,9 @@ export async function submitAssignment(input: z.infer<typeof assignmentSubmissio
       .from('submissions')
       .insert({
         assignment_id,
-        student_id,
+        student_id: user.id,
         submission_text: submission_text || null,
-        file_urls: file_urls || null,
+        file_urls: file_urls ?? null,
         submitted_at: new Date().toISOString(),
         status: 'submitted',
       })
@@ -210,7 +256,7 @@ export async function submitAssignment(input: z.infer<typeof assignmentSubmissio
     result = data;
   }
 
-  revalidatePath(`/lms/assignments/${assignment_id}`);
+  revalidatePath('/dashboard/student/assignments');
   return { success: true, data: result };
 }
 

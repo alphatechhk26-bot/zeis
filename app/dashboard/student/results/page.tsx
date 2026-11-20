@@ -181,10 +181,10 @@ const studentProfile: StudentProfile = {
   id: profileData.id,
   full_name: profileData.full_name || 'Student',
   admission_number: studentObj?.admission_number || 'N/A',
-  school_name: 'ZEIS Academy',
+  school_name: 'School information unavailable',
   class_name: enroll?.classes?.name || 'N/A',
   academic_year: enroll?.academic_years?.name || 'N/A',
-  term: 'Term 1',
+  term: 'Term information unavailable',
 };
         setProfile(studentProfile);
 
@@ -497,8 +497,8 @@ if (!attError && attendanceData) {
         </div>
         <div className="bg-gray-900/60 rounded-lg p-4 border border-gray-800/50">
           <div className="text-sm text-gray-400">Class Rank</div>
-          <div className="text-3xl font-bold text-yellow-400">#12</div>
-          <div className="text-xs text-gray-500 mt-1">Out of 45 students</div>
+          <div className="text-3xl font-bold text-yellow-400">—</div>
+          <div className="text-xs text-gray-500 mt-1">Class ranking is not available</div>
         </div>
       </div>
 
