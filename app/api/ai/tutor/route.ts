@@ -1,268 +1,333 @@
-// app/api/ai/tutor/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
+import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
-import type { Database } from '@/types/zeis';
 
-// ----------------------------------------------------------------------
-// Configuration
-// ----------------------------------------------------------------------
+const MAX_HISTORY_MESSAGES = 10;
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+const SYSTEM_PROMPTS = {
+  student: `You are a friendly and patient AI tutor for school students.
+Help with homework, explain subjects clearly, and encourage learning. Provide step-by-step explanations,
+use analogies, and avoid giving direct answers to test questions. Always be supportive and age-appropriate.`,
+  computer: `You are an expert coding assistant specializing in HTML, CSS, JavaScript, Python, and SQL.
+Explain code clearly, suggest improvements, debug errors, and teach best practices. Keep explanations concise
+and consider the learner's level.`,
+  teacher: `You are an AI assistant for teachers. Help generate exam questions, create lesson plans, and suggest
+teaching strategies. Be professional, thorough, and adaptable to different subjects and grade levels.`,
+} as const;
+
+const tutorRequestSchema = z.object({
+  mode: z.enum(['student', 'computer', 'teacher']),
+  message: z.string().trim().min(1).max(10000),
+  conversation_id: z.string().uuid().optional(),
 });
 
-const MAX_HISTORY_MESSAGES = 10; // last N messages to include as context
+async function getAuthenticatedContext() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
 
-// System prompts per mode
-const SYSTEM_PROMPTS: Record<string, string> = {
-  student: `You are a friendly and patient AI tutor for school students. 
-Your role is to help with homework, explain subjects clearly, and encourage learning. 
-Provide step-by-step explanations, use analogies, and avoid giving direct answers to test questions. 
-Always be supportive and age-appropriate.`,
+  if (authError || !user) {
+    return { response: NextResponse.json({ error: 'Please sign in to use the AI Tutor.' }, { status: 401 }) };
+  }
 
-  computer: `You are an expert coding assistant specializing in HTML, CSS, JavaScript, Python, and SQL. 
-Explain code clearly, suggest improvements, debug errors, and teach best practices. 
-Use examples, keep explanations concise, and always consider the learner's level.`,
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('role, school_id')
+    .eq('id', user.id)
+    .single();
 
-  teacher: `You are an AI assistant for teachers. Your tasks include:
-- Generating exam questions with varying difficulty levels.
-- Creating lesson plans with objectives, activities, and assessments.
-- Suggesting teaching strategies and resources.
-Be professional, thorough, and adaptable to different subjects and grade levels.`,
-};
+  if (profileError || !profile) {
+    return { response: NextResponse.json({ error: 'Your ZEIS profile could not be found.' }, { status: 404 }) };
+  }
+  if (!profile.school_id) {
+    return {
+      response: NextResponse.json(
+        { error: 'A school must be assigned to your ZEIS profile before using the AI Tutor.' },
+        { status: 409 },
+      ),
+    };
+  }
 
-// ----------------------------------------------------------------------
-// Request validation schema (manual)
-// ----------------------------------------------------------------------
-
-interface TutorRequest {
-  mode: 'student' | 'computer' | 'teacher';
-  message: string;
-  conversation_id?: string;
-  student_id: string;
-  school_id: string;
+  return { supabase, user, profile: { ...profile, school_id: profile.school_id } };
 }
 
-function isValidRequest(body: any): body is TutorRequest {
-  return (
-    body &&
-    typeof body.mode === 'string' &&
-    ['student', 'computer', 'teacher'].includes(body.mode) &&
-    typeof body.message === 'string' &&
-    body.message.trim().length > 0 &&
-    typeof body.student_id === 'string' &&
-    typeof body.school_id === 'string'
-  );
+function messageError(error: unknown, fallback: string) {
+  console.error(fallback, error);
+  return fallback;
 }
 
-// ----------------------------------------------------------------------
-// POST handler
-// ----------------------------------------------------------------------
-
-export async function POST(request: NextRequest) {
+export async function GET(request: NextRequest) {
   try {
-    // 1. Authenticate user
-    const supabase = await createClient();
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
+    const auth = await getAuthenticatedContext();
+    if ('response' in auth) return auth.response;
 
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const conversationId = request.nextUrl.searchParams.get('conversation_id');
+    if (conversationId) {
+      const validatedId = z.string().uuid().safeParse(conversationId);
+      if (!validatedId.success) {
+        return NextResponse.json({ error: 'Invalid conversation ID.' }, { status: 400 });
+      }
 
-    // 2. Parse and validate request body
-    const body = await request.json();
-    if (!isValidRequest(body)) {
-      return NextResponse.json(
-        { error: 'Invalid request: missing or malformed fields.' },
-        { status: 400 }
-      );
-    }
-
-    const { mode, message, conversation_id, student_id, school_id } = body;
-
-    // 3. Verify user has permission to access this student/school
-    const { data: profile, error: profileError } = await supabase
-      .from('profiles')
-      .select('role, school_id')
-      .eq('id', user.id)
-      .single();
-
-    if (profileError || !profile) {
-      return NextResponse.json({ error: 'User profile not found.' }, { status: 404 });
-    }
-
-    // Allow if user is the student themselves, or a teacher/admin of the same school
-    const isSelf = user.id === student_id;
-    const isStaff = ['admin', 'teacher', 'super_admin'].includes(profile.role);
-    const sameSchool = profile.school_id === school_id;
-
-    if (!isSelf && !(isStaff && sameSchool)) {
-      return NextResponse.json(
-        { error: 'You do not have permission to access this student.' },
-        { status: 403 }
-      );
-    }
-
-    // 4. Get or create conversation
-    let convId = conversation_id;
-    if (convId) {
-      // Verify the conversation belongs to this student and school
-      const { data: conv, error: convError } = await supabase
+      const { data: conversation, error: conversationError } = await auth.supabase
         .from('ai_conversations')
         .select('id')
-        .eq('id', convId)
-        .eq('student_id', student_id)
-        .eq('school_id', school_id)
-        .single();
+        .eq('id', validatedId.data)
+        .eq('student_id', auth.user.id)
+        .eq('school_id', auth.profile.school_id)
+        .maybeSingle();
 
-      if (convError || !conv) {
-        return NextResponse.json(
-          { error: 'Conversation not found or does not belong to this student.' },
-          { status: 404 }
-        );
+      if (conversationError) {
+        console.error('Failed to verify AI conversation ownership:', conversationError);
+        return NextResponse.json({ error: 'Unable to load this conversation.' }, { status: 500 });
       }
+      if (!conversation) {
+        return NextResponse.json({ error: 'Conversation not found.' }, { status: 404 });
+      }
+
+      const { data: messages, error: messageError } = await auth.supabase
+        .from('ai_messages')
+        .select('id, role, content, created_at')
+        .eq('conversation_id', conversation.id)
+        .order('created_at', { ascending: true })
+        .limit(500);
+
+      if (messageError) {
+        console.error('Failed to load AI conversation messages:', messageError);
+        return NextResponse.json({ error: 'Unable to load conversation messages.' }, { status: 500 });
+      }
+
+      return NextResponse.json({ messages: messages ?? [] });
+    }
+
+    const { data: conversations, error: conversationError } = await auth.supabase
+      .from('ai_conversations')
+      .select('id, title, created_at')
+      .eq('student_id', auth.user.id)
+      .eq('school_id', auth.profile.school_id)
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    if (conversationError) {
+      console.error('Failed to load AI conversation history:', conversationError);
+      return NextResponse.json({ error: 'Unable to load conversation history.' }, { status: 500 });
+    }
+
+    return NextResponse.json({ conversations: conversations ?? [] });
+  } catch (error) {
+    return NextResponse.json(
+      { error: messageError(error, 'Unexpected error loading AI Tutor data.') },
+      { status: 500 },
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  let conversationId: string | null = null;
+  try {
+    const auth = await getAuthenticatedContext();
+    if ('response' in auth) return auth.response;
+
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: 'Request body must be valid JSON.' }, { status: 400 });
+    }
+
+    const parsedRequest = tutorRequestSchema.safeParse(body);
+    if (!parsedRequest.success) {
+      return NextResponse.json(
+        { error: 'Enter a message of up to 10,000 characters and choose a valid tutor mode.' },
+        { status: 400 },
+      );
+    }
+
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
+    if (!apiKey) {
+      return NextResponse.json({ error: 'The AI Tutor is not configured. Please contact your administrator.' }, { status: 503 });
+    }
+
+    const { mode, message, conversation_id: requestedConversationId } = parsedRequest.data;
+    let conversation;
+
+    if (requestedConversationId) {
+      const { data, error } = await auth.supabase
+        .from('ai_conversations')
+        .select('id')
+        .eq('id', requestedConversationId)
+        .eq('student_id', auth.user.id)
+        .eq('school_id', auth.profile.school_id)
+        .maybeSingle();
+
+      if (error) {
+        console.error('Failed to verify AI conversation ownership:', error);
+        return NextResponse.json({ error: 'Unable to verify this conversation.' }, { status: 500 });
+      }
+      if (!data) {
+        return NextResponse.json({ error: 'Conversation not found.' }, { status: 404 });
+      }
+      conversation = data;
     } else {
-      // Create new conversation
       const title = message.slice(0, 60) + (message.length > 60 ? '...' : '');
-      const { data: newConv, error: createError } = await supabase
+      const { data, error } = await auth.supabase
         .from('ai_conversations')
         .insert({
-          school_id,
-          student_id,
+          student_id: auth.user.id,
+          school_id: auth.profile.school_id,
           title,
         })
         .select('id')
         .single();
 
-      if (createError || !newConv) {
+      if (error || !data) {
+        console.error('Failed to create AI conversation:', error);
         return NextResponse.json(
-          { error: 'Failed to create conversation.' },
-          { status: 500 }
+          { error: 'Unable to create a conversation. Check your ZEIS profile and try again.' },
+          { status: 500 },
         );
       }
-      convId = newConv.id;
+      conversation = data;
     }
 
-    // 5. Save user message to ai_messages
-    const { error: insertUserError } = await supabase.from('ai_messages').insert({
-      conversation_id: convId,
-      role: 'user',
-      content: message,
-    });
+    const convId = conversation.id;
+    conversationId = convId;
 
-    if (insertUserError) {
-      // Log error but continue – we don't want to fail the whole request
-      console.error('Failed to save user message:', insertUserError);
-    }
-
-    // 6. Fetch conversation history (for context)
-    const { data: history, error: historyError } = await supabase
+    const { data: lastMessage, error: lastMessageError } = await auth.supabase
       .from('ai_messages')
       .select('role, content')
       .eq('conversation_id', convId)
-      .order('created_at', { ascending: true })
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (lastMessageError) {
+      console.error('Failed to check the latest AI message:', lastMessageError);
+      return NextResponse.json(
+        { error: 'Unable to prepare your message. Please try again.', conversation_id: convId },
+        { status: 500 },
+      );
+    }
+
+    const isRetry = lastMessage?.role === 'user' && lastMessage.content === message;
+    if (!isRetry) {
+      const { error: insertUserError } = await auth.supabase.from('ai_messages').insert({
+        conversation_id: convId,
+        role: 'user',
+        content: message,
+      });
+
+      if (insertUserError) {
+        console.error('Failed to save AI Tutor user message:', insertUserError);
+        return NextResponse.json(
+          { error: 'Unable to save your message. Please try again.', conversation_id: convId },
+          { status: 500 },
+        );
+      }
+    }
+
+    const { data: history, error: historyError } = await auth.supabase
+      .from('ai_messages')
+      .select('role, content')
+      .eq('conversation_id', convId)
+      .order('created_at', { ascending: false })
       .limit(MAX_HISTORY_MESSAGES);
 
     if (historyError) {
-      console.error('Failed to fetch history:', historyError);
+      console.error('Failed to load AI Tutor context:', historyError);
+      return NextResponse.json(
+        { error: 'Unable to load conversation context.', conversation_id: convId },
+        { status: 500 },
+      );
     }
 
-    // Build messages for OpenAI
-    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-      { role: 'system', content: SYSTEM_PROMPTS[mode] },
-    ];
-
-    // Add history (excluding the user message we just inserted, if it's in the list)
-    // We'll include up to MAX_HISTORY_MESSAGES
-    const historyMessages = history || [];
-    for (const msg of historyMessages) {
-      // Avoid duplicating the current user message if it was already inserted
-      // but since we inserted it, it's in history; we can skip if we want to avoid duplicates,
-      // but we want it included for context, but we already have it as the last message.
-      // We'll include all except possibly the last user message if we want to add it separately?
-      // Actually we already have the user message in the database; we'll just include history
-      // and then add the current user message again? Better: we add user message separately at the end.
+    const openai = new OpenAI({ apiKey, timeout: 60_000, maxRetries: 1 });
+    let stream: Awaited<ReturnType<typeof openai.chat.completions.create>>;
+    try {
+      stream = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPTS[mode] },
+          ...(history ?? [])
+            .reverse()
+            .filter((item) => item.role === 'user' || item.role === 'assistant')
+            .map((item) => ({
+              role: item.role as 'user' | 'assistant',
+              content: item.content,
+            })),
+        ],
+        stream: true,
+        temperature: 0.7,
+        max_tokens: 2000,
+      });
+    } catch (error) {
+      console.error('OpenAI failed to start an AI Tutor response:', error);
+      return NextResponse.json(
+        { error: 'The AI service could not start a response. Please retry shortly.', conversation_id: convId },
+        { status: 502 },
+      );
     }
 
-    // Add the current user message (we already saved it, but we need to include it in the OpenAI call)
-    messages.push({ role: 'user', content: message });
-
-    // 7. Call OpenAI with streaming
-    const stream = await openai.chat.completions.create({
-      model: 'gpt-4o-mini', // or 'gpt-4-turbo' for better quality
-      messages,
-      stream: true,
-      temperature: 0.7,
-      max_tokens: 2000,
-    });
-
-    // 8. Create a streaming response
     const encoder = new TextEncoder();
-    const readableStream = new ReadableStream({
+    const readableStream = new ReadableStream<Uint8Array>({
       async start(controller) {
         let fullContent = '';
+        const sendEvent = (event: { content?: string; error?: string }) => {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        };
 
         try {
           for await (const chunk of stream) {
-            const content = chunk.choices[0]?.delta?.content || '';
+            const content = chunk.choices[0]?.delta?.content;
             if (content) {
               fullContent += content;
-              // Send the chunk as SSE (Server-Sent Events)
-              const eventData = `data: ${JSON.stringify({ content })}\n\n`;
-              controller.enqueue(encoder.encode(eventData));
+              sendEvent({ content });
             }
           }
 
-          // After stream ends, save the assistant message
-          if (fullContent) {
-            const { error: insertAssistError } = await supabase
-              .from('ai_messages')
-              .insert({
-                conversation_id: convId,
-                role: 'assistant',
-                content: fullContent,
-              });
+          if (!fullContent) throw new Error('The AI provider returned an empty response.');
 
-            if (insertAssistError) {
-              console.error('Failed to save assistant message:', insertAssistError);
-            }
+          const { error: insertAssistantError } = await auth.supabase.from('ai_messages').insert({
+            conversation_id: convId,
+            role: 'assistant',
+            content: fullContent,
+          });
+          if (insertAssistantError) throw insertAssistantError;
 
-            // Update conversation updated_at (optional)
-            await supabase
-              .from('ai_conversations')
-              .update({ updated_at: new Date().toISOString() })
-              .eq('id', convId);
-          }
-
-          // End SSE stream
-          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-          controller.close();
+          const { error: updateConversationError } = await auth.supabase
+            .from('ai_conversations')
+            .update({ updated_at: new Date().toISOString() })
+            .eq('id', convId)
+            .eq('student_id', auth.user.id);
+          if (updateConversationError) throw updateConversationError;
         } catch (error) {
-          console.error('Streaming error:', error);
-          const errorMsg = `data: ${JSON.stringify({ error: 'Streaming error' })}\n\n`;
-          controller.enqueue(encoder.encode(errorMsg));
+          console.error('AI Tutor stream or persistence failed:', error);
+          sendEvent({ error: 'The AI response could not be completed or saved. Please retry.' });
+        } finally {
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
           controller.close();
         }
       },
     });
 
-    // 9. Return streaming response with appropriate headers
     return new NextResponse(readableStream, {
       headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+        'X-Conversation-ID': convId,
       },
     });
   } catch (error) {
-    console.error('Unexpected error:', error);
+    console.error('Unexpected AI Tutor API error:', error);
     return NextResponse.json(
-      { error: 'Internal server error.' },
-      { status: 500 }
+      {
+        error: 'Unexpected AI Tutor error. Please try again.',
+        ...(conversationId ? { conversation_id: conversationId } : {}),
+      },
+      { status: 500 },
     );
   }
 }

@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/lib/supabase/client';
 import { useAIContext } from '@/contexts/AIContext';
+import type { User } from '@supabase/supabase-js';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -18,7 +19,6 @@ import {
   ClockIcon,
   HomeIcon,
 } from '@heroicons/react/24/outline';
-import { useDebounce } from 'use-debounce';
 
 // --------------------------------------------------------------------------
 // Prompt suggestions per mode
@@ -65,7 +65,7 @@ interface Conversation {
 // --------------------------------------------------------------------------
 export default function AITutorDrawer() {
   const pathname = usePathname();
-  const { context, mode: contextMode, setMode } = useAIContext();
+  const { context, mode: contextMode } = useAIContext();
 
   // Derive mode from route if not set via context
   const activeMode = useMemo(() => {
@@ -87,62 +87,143 @@ export default function AITutorDrawer() {
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const [user, setUser] = useState<any>(null);
-  const [profile, setProfile] = useState<{ id: string; school_id: string } | null>(null);
+  const [historyLoadedUserId, setHistoryLoadedUserId] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<{ id: string; school_id: string | null; role: string } | null>(null);
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [retryPrompt, setRetryPrompt] = useState<Message | null>(null);
 
-  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
+  const historyRequestRef = useRef<{ userId: string; promise: Promise<Conversation[]> } | null>(null);
+  const historyCacheRef = useRef<{ userId: string; conversations: Conversation[] } | null>(null);
+  const messageRequestRef = useRef<{ conversationId: string; promise: Promise<Message[]> } | null>(null);
+  const currentConversationIdRef = useRef<string | null>(null);
+  const shouldLoadLatestRef = useRef(true);
+  const sendingRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // Load user and profile
   useEffect(() => {
     const supabase = createClient();
-    supabaseRef.current = supabase;
+    let active = true;
 
     async function loadUser() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        setUser(user);
-        const { data: profile } = await supabase
+      setProfileLoading(true);
+      setProfileError(null);
+      try {
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError) throw new Error('Unable to verify your sign-in. Please refresh and try again.');
+        if (!user) throw new Error('Sign in to use the AI Tutor.');
+
+        const { data: profile, error: profileQueryError } = await supabase
           .from('profiles')
-          .select('id, school_id')
+          .select('id, school_id, role')
           .eq('id', user.id)
           .single();
-        const schoolId = profile?.school_id;
-        if (profile && schoolId) setProfile({ id: profile.id, school_id: schoolId });
+
+        if (profileQueryError || !profile) {
+          throw new Error('Your ZEIS profile could not be loaded.');
+        }
+
+        if (active) {
+          setUser(user);
+          setProfile(profile);
+        }
+      } catch (error) {
+        if (active) {
+          setProfileError(error instanceof Error ? error.message : 'Unable to load your ZEIS profile.');
+        }
+      } finally {
+        if (active) setProfileLoading(false);
       }
     }
-    loadUser();
+
+    void loadUser();
+    return () => {
+      active = false;
+    };
   }, []);
 
   // Fetch conversation history
-  const fetchConversations = useCallback(async () => {
-    const supabase = supabaseRef.current;
-    if (!user || !supabase) return;
-    setLoadingHistory(true);
-    const { data, error } = await supabase
-      .from('ai_conversations')
-      .select('id, title, created_at')
-      .eq('student_id', user.id)
-      .order('created_at', { ascending: false });
-    if (!error && data) {
-      setConversations(data);
+  const fetchConversations = useCallback(async (force = false) => {
+    if (!user) return [];
+    if (!force && historyCacheRef.current?.userId === user.id) {
+      return historyCacheRef.current.conversations;
     }
-    setLoadingHistory(false);
+    if (historyRequestRef.current?.userId === user.id) {
+      return historyRequestRef.current.promise;
+    }
+
+    setLoadingHistory(true);
+    setHistoryError(null);
+    const request = (async () => {
+      const response = await fetch('/api/ai/tutor', { cache: 'no-store' });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error || 'Unable to load conversation history.');
+      }
+      return payload.conversations as Conversation[];
+    })();
+
+    historyRequestRef.current = { userId: user.id, promise: request };
+    try {
+      const data = await request;
+      if (user.id === historyRequestRef.current?.userId) {
+        historyCacheRef.current = { userId: user.id, conversations: data };
+        setConversations(data);
+        setHistoryLoadedUserId(user.id);
+      }
+      return data;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to load conversation history.';
+      setHistoryError(message);
+      throw error;
+    } finally {
+      if (historyRequestRef.current?.promise === request) {
+        historyRequestRef.current = null;
+      }
+      setLoadingHistory(false);
+    }
   }, [user]);
 
   // Load messages for a conversation
   const loadConversation = useCallback(async (convId: string) => {
-    const supabase = supabaseRef.current;
-    if (!convId || !supabase) return;
-    const { data, error } = await supabase
-      .from('ai_messages')
-      .select('id, role, content, created_at')
-      .eq('conversation_id', convId)
-      .order('created_at', { ascending: true });
-    if (!error && data) {
-      setMessages(data as Message[]);
+    if (!convId) return;
+    if (messageRequestRef.current?.conversationId === convId) {
+      return messageRequestRef.current.promise;
+    }
+    if (currentConversationIdRef.current === convId) return;
+
+    const request = (async () => {
+      const response = await fetch(
+        `/api/ai/tutor?conversation_id=${encodeURIComponent(convId)}`,
+        { cache: 'no-store' },
+      );
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error || 'Unable to load this conversation.');
+      }
+      return payload.messages as Message[];
+    })();
+
+    messageRequestRef.current = { conversationId: convId, promise: request };
+    try {
+      const data = await request;
+      setMessages(data);
+      currentConversationIdRef.current = convId;
       setCurrentConversationId(convId);
+      shouldLoadLatestRef.current = false;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to load this conversation.';
+      setHistoryError(message);
+      throw error;
+    } finally {
+      if (messageRequestRef.current?.promise === request) {
+        messageRequestRef.current = null;
+      }
     }
   }, []);
 
@@ -153,18 +234,30 @@ export default function AITutorDrawer() {
     }
   }, [messages]);
 
-  // On open, fetch history and load latest conversation if exists
+  // History is fetched only when the drawer opens or the authenticated user changes.
   useEffect(() => {
-    if (isOpen) {
-      // This effect intentionally starts async loading when the drawer opens.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      fetchConversations();
-      // Load the most recent conversation, if any
-      if (conversations.length > 0 && !currentConversationId) {
-        loadConversation(conversations[0].id);
-      }
+    if (!isOpen || !user) return;
+    let active = true;
+    void Promise.resolve()
+      .then(() => (active ? fetchConversations() : undefined))
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [isOpen, user, fetchConversations]);
+
+  useEffect(() => {
+    if (
+      isOpen &&
+      user &&
+      historyLoadedUserId === user.id &&
+      shouldLoadLatestRef.current &&
+      !currentConversationId &&
+      conversations.length > 0
+    ) {
+      void loadConversation(conversations[0].id).catch(() => undefined);
     }
-  }, [isOpen, fetchConversations, loadConversation, conversations, currentConversationId]);
+  }, [isOpen, user, historyLoadedUserId, currentConversationId, conversations, loadConversation]);
 
   useEffect(() => {
     const handleAssistantRequest = (event: Event) => {
@@ -178,114 +271,122 @@ export default function AITutorDrawer() {
     return () => window.removeEventListener('zeis:open-ai-assistant', handleAssistantRequest);
   }, []);
 
-  // Handle sending message
-  const sendMessage = useCallback(async () => {
-    if (!input.trim() || isStreaming || !user || !profile) return;
-
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: input.trim(),
-    };
-    setMessages((prev) => [...prev, userMessage]);
-    setInput('');
-    setIsStreaming(true);
-
-    // Build payload
-    const payload: any = {
-      mode: activeMode,
-      message: userMessage.content,
-      student_id: user.id,
-      school_id: profile.school_id,
-      conversation_id: currentConversationId || undefined,
-    };
-
-    // Add context if provided (e.g., code snippet)
-    if (context) {
-      // We'll append context to the message, or send as a separate field.
-      // The API expects only these fields, but we can combine context into message.
-      // Better: prepend context to the message.
-      payload.message = `Context: ${context}\n\n${payload.message}`;
+  // Handle send button, keyboard submit, prompt chips, and retries.
+  const sendMessage = useCallback(async (requestedText?: string, retryMessage?: Message) => {
+    const text = (requestedText ?? input).trim();
+    if (!text || isStreaming || sendingRef.current) return;
+    if (!user || !profile) {
+      setSendError(profileError || 'Sign in to use the AI Tutor.');
+      return;
     }
+    if (!profile.school_id) {
+      setSendError('Your school has not been assigned yet. Contact your school administrator.');
+      return;
+    }
+
+    const userMessage: Message = retryMessage ?? {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: text,
+    };
+    const assistantMessageId = `assistant-${userMessage.id}`;
+    if (!retryMessage) {
+      setMessages((previous) => [...previous, userMessage]);
+      setInput('');
+    }
+    setSendError(null);
+    setRetryPrompt(null);
+    setIsStreaming(true);
+    sendingRef.current = true;
+
+    const requestMessage = context ? `Context: ${context}\n\n${text}` : text;
 
     try {
       const response = await fetch('/api/ai/tutor', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          mode: activeMode,
+          message: requestMessage,
+          conversation_id: currentConversationIdRef.current ?? undefined,
+        }),
       });
 
-      if (!response.body) {
-        throw new Error('No response body');
+      const responseConversationId = response.headers.get('x-conversation-id');
+      if (responseConversationId) {
+        currentConversationIdRef.current = responseConversationId;
+        setCurrentConversationId(responseConversationId);
       }
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        if (typeof payload?.conversation_id === 'string') {
+          currentConversationIdRef.current = payload.conversation_id;
+          setCurrentConversationId(payload.conversation_id);
+        }
+        throw new Error(payload?.error || `The AI Tutor request failed (${response.status}).`);
+      }
+      if (!response.body) throw new Error('The AI Tutor returned an empty response.');
+
+      setMessages((previous) => [
+        ...previous,
+        { id: assistantMessageId, role: 'assistant', content: '' },
+      ]);
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let assistantContent = '';
-      const assistantMessageId = Date.now() + 1;
-
-      // Add placeholder for assistant message
-      setMessages((prev) => [
-        ...prev,
-        { id: String(assistantMessageId), role: 'assistant', content: '' },
-      ]);
-
-      // Process stream
       let buffer = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
 
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            if (data === '[DONE]') continue;
-            try {
-              const parsed = JSON.parse(data);
-              if (parsed.content) {
-                assistantContent += parsed.content;
-                // Update the assistant message in state (append)
-                setMessages((prev) => {
-                  const last = prev[prev.length - 1];
-                  if (last.role === 'assistant' && last.id === String(assistantMessageId)) {
-                    return [
-                      ...prev.slice(0, -1),
-                      { ...last, content: last.content + parsed.content },
-                    ];
-                  }
-                  return prev;
-                });
-              }
-            } catch {
-              // ignore malformed JSON
-            }
+      const processLine = (line: string) => {
+        if (!line.startsWith('data:')) return;
+        const data = line.slice(5).trimStart();
+        if (!data || data === '[DONE]') return;
+
+        const parsed: { content?: string; error?: string } = JSON.parse(data);
+        if (parsed.error) throw new Error(parsed.error);
+        if (parsed.content) {
+          assistantContent += parsed.content;
+          setMessages((previous) =>
+            previous.map((message) =>
+              message.id === assistantMessageId
+                ? { ...message, content: message.content + parsed.content }
+                : message,
+            ),
+          );
+        }
+      };
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (value) buffer += decoder.decode(value, { stream: !done });
+          const lines = buffer.split(/\r?\n/);
+          buffer = lines.pop() ?? '';
+          for (const line of lines) processLine(line);
+          if (done) {
+            if (buffer) processLine(buffer);
+            break;
           }
         }
+      } finally {
+        reader.releaseLock();
       }
 
-      // After stream ends, the assistant message is complete
-      // The API already saved it to the DB, but we have it in state.
-
-      // Update conversation ID if it was created by the API
-      // The API returns conversation_id in the response headers? Not in SSE.
-      // We could parse the first chunk for metadata, but for simplicity we'll rely on the fact that a new conversation was created if we didn't have one.
-      // We can fetch conversations again.
-      await fetchConversations();
-
+      if (!assistantContent) throw new Error('The AI Tutor did not return a response. Please try again.');
+      await fetchConversations(true).catch((error: unknown) => {
+        console.error('Unable to refresh conversation history:', error);
+      });
     } catch (error) {
-      console.error('Stream error:', error);
-      // Add error message
-      setMessages((prev) => [
-        ...prev,
-        { id: Date.now().toString(), role: 'assistant', content: 'Sorry, an error occurred.' },
-      ]);
+      console.error('AI Tutor request failed:', error);
+      setSendError(error instanceof Error ? error.message : 'Unable to send your message. Please try again.');
+      setRetryPrompt(userMessage);
+      setMessages((previous) => previous.filter((message) => message.id !== assistantMessageId));
     } finally {
+      sendingRef.current = false;
       setIsStreaming(false);
     }
-  }, [input, isStreaming, user, profile, activeMode, context, currentConversationId, fetchConversations]);
+  }, [input, isStreaming, user, profile, profileError, activeMode, context, fetchConversations]);
 
   // Handle keyboard shortcuts
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -308,12 +409,17 @@ export default function AITutorDrawer() {
   const startNewConversation = () => {
     setMessages([]);
     setCurrentConversationId(null);
+    currentConversationIdRef.current = null;
+    shouldLoadLatestRef.current = false;
+    setSendError(null);
+    setRetryPrompt(null);
     setShowHistory(false);
   };
 
   // Select a conversation from history
   const selectConversation = (convId: string) => {
-    loadConversation(convId);
+    shouldLoadLatestRef.current = false;
+    void loadConversation(convId).catch(() => undefined);
     setShowHistory(false);
   };
 
@@ -363,19 +469,25 @@ export default function AITutorDrawer() {
               </div>
               <div className="flex items-center space-x-1">
                 <button
+                  type="button"
+                  aria-label="Conversation history"
                   onClick={() => setShowHistory(!showHistory)}
                   className="p-1.5 rounded-md hover:bg-gray-800 text-gray-400 hover:text-white"
                 >
                   <ClockIcon className="h-5 w-5" />
                 </button>
                 <button
+                  type="button"
                   onClick={startNewConversation}
+                  aria-label="Start a new conversation"
                   className="p-1.5 rounded-md hover:bg-gray-800 text-gray-400 hover:text-white"
                 >
                   <HomeIcon className="h-5 w-5" />
                 </button>
                 <button
+                  type="button"
                   onClick={toggleDrawer}
+                  aria-label="Close AI Tutor"
                   className="p-1.5 rounded-md hover:bg-gray-800 text-gray-400 hover:text-white"
                 >
                   <XMarkIcon className="h-5 w-5" />
@@ -393,7 +505,18 @@ export default function AITutorDrawer() {
                   className="border-b border-gray-700/50 max-h-48 overflow-y-auto p-2"
                 >
                   {loadingHistory ? (
-                    <div className="text-center text-gray-500 text-sm py-2">Loading...</div>
+                    <div role="status" className="text-center text-gray-500 text-sm py-2">Loading conversations...</div>
+                  ) : historyError ? (
+                    <div className="p-3 text-center">
+                      <p role="alert" className="text-sm text-red-300">{historyError}</p>
+                      <button
+                        type="button"
+                        onClick={() => void fetchConversations(true).catch(() => undefined)}
+                        className="mt-2 text-xs font-medium text-blue-300 hover:text-blue-200"
+                      >
+                        Retry loading history
+                      </button>
+                    </div>
                   ) : conversations.length === 0 ? (
                     <div className="text-center text-gray-500 text-sm py-2">No conversations yet</div>
                   ) : (
@@ -418,6 +541,34 @@ export default function AITutorDrawer() {
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {profileLoading && (
+                <p role="status" className="text-center text-sm text-gray-400">Verifying your ZEIS account…</p>
+              )}
+              {!profileLoading && profileError && (
+                <p role="alert" className="rounded-lg border border-red-500/30 bg-red-950/30 p-3 text-sm text-red-200">
+                  {profileError}
+                </p>
+              )}
+              {!profileLoading && profile && !profile.school_id && (
+                <p role="status" className="rounded-lg border border-amber-500/30 bg-amber-950/30 p-3 text-sm text-amber-100">
+                  Your school has not been assigned yet. Contact your school administrator to enable AI Tutor conversations.
+                </p>
+              )}
+              {sendError && (
+                <div role="alert" className="rounded-lg border border-red-500/30 bg-red-950/30 p-3 text-sm text-red-200">
+                  <p>{sendError}</p>
+                  {retryPrompt && (
+                    <button
+                      type="button"
+                      onClick={() => void sendMessage(retryPrompt.content, retryPrompt)}
+                      disabled={isStreaming}
+                      className="mt-2 font-medium text-red-100 underline underline-offset-2 disabled:opacity-50"
+                    >
+                      Retry message
+                    </button>
+                  )}
+                </div>
+              )}
               {messages.length === 0 ? (
                 <div className="text-center text-gray-500 mt-20">
                   <SparklesIcon className="h-12 w-12 mx-auto text-blue-400/30" />
@@ -426,11 +577,10 @@ export default function AITutorDrawer() {
                     {suggestions.slice(0, 4).map((s) => (
                       <button
                         key={s}
-                        onClick={() => {
-                          setInput(s);
-                          setTimeout(() => sendMessage(), 100);
-                        }}
-                        className="px-3 py-1.5 bg-gray-800/50 hover:bg-gray-700 rounded-full text-xs text-gray-300 border border-gray-700"
+                        type="button"
+                        onClick={() => void sendMessage(s)}
+                        disabled={profileLoading || !user || !profile?.school_id || isStreaming}
+                        className="px-3 py-1.5 bg-gray-800/50 hover:bg-gray-700 rounded-full text-xs text-gray-300 border border-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {s}
                       </button>
@@ -452,12 +602,16 @@ export default function AITutorDrawer() {
                     >
                       {msg.role === 'assistant' ? (
                         <div className="prose prose-invert prose-sm max-w-none prose-pre:bg-gray-900/80">
-                          <ReactMarkdown
-                            remarkPlugins={[remarkGfm]}
-                            rehypePlugins={[rehypeHighlight]}
-                          >
-                            {msg.content || '...'}
-                          </ReactMarkdown>
+                          {msg.content ? (
+                            <ReactMarkdown
+                              remarkPlugins={[remarkGfm]}
+                              rehypePlugins={[rehypeHighlight]}
+                            >
+                              {msg.content}
+                            </ReactMarkdown>
+                          ) : (
+                            <span role="status" className="text-gray-400">Thinking…</span>
+                          )}
                         </div>
                       ) : (
                         <p className="whitespace-pre-wrap text-sm">{msg.content}</p>
@@ -482,14 +636,20 @@ export default function AITutorDrawer() {
                 placeholder="Ask a question..."
                 rows={2}
                 className="flex-1 bg-gray-800/50 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                disabled={isStreaming}
+                disabled={isStreaming || profileLoading || !user || !profile?.school_id}
               />
               <button
-                onClick={sendMessage}
-                disabled={!input.trim() || isStreaming}
+                type="button"
+                onClick={() => void sendMessage()}
+                disabled={!input.trim() || isStreaming || profileLoading || !user || !profile?.school_id}
                 className="p-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg text-white flex-shrink-0"
+                aria-label={isStreaming ? 'Sending message' : 'Send message'}
               >
-                <PaperAirplaneIcon className="h-5 w-5" />
+                {isStreaming ? (
+                  <span className="block h-5 w-5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                ) : (
+                  <PaperAirplaneIcon className="h-5 w-5" />
+                )}
               </button>
             </div>
           </motion.div>
