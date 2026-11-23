@@ -1,17 +1,33 @@
-import { TeacherEmptyState, TeacherPageHeader, TeacherPanel } from '@/components/dashboard/teacher-ui';
+import {
+  renderTeacherPageSafely,
+  TeacherEmptyState,
+  TeacherErrorState,
+  TeacherPageHeader,
+  TeacherPanel,
+} from '@/components/dashboard/teacher-ui';
 import { formatTeacherDate, requireTeacherContext } from '@/lib/teacher-dashboard';
 
 export default async function TeacherExamsPage() {
-  const { supabase, teacherId, schoolId } = await requireTeacherContext();
-
-  if (!schoolId) {
+  const context = await requireTeacherContext();
+  if ('error' in context) {
     return (
       <div className="space-y-6">
         <TeacherPageHeader title="Exams" description="Examinations scheduled for your assigned classes." />
-        <TeacherEmptyState title="School assignment pending" description="Exam schedules will appear after a school is assigned to your account." />
+        <TeacherErrorState />
       </div>
     );
   }
+  const { supabase, teacherId, schoolId } = context;
+
+  return renderTeacherPageSafely('exams', async () => {
+    if (!schoolId) {
+      return (
+        <div className="space-y-6">
+          <TeacherPageHeader title="Exams" description="Examinations scheduled for your assigned classes." />
+          <TeacherEmptyState title="School assignment pending" description="Exam schedules will appear after a school is assigned to your account." />
+        </div>
+      );
+    }
 
   const { data: assignments, error: assignmentError } = await supabase
     .from('teacher_assignments')
@@ -47,41 +63,42 @@ export default async function TeacherExamsPage() {
   const classById = new Map((classResult.data ?? []).map((classroom) => [classroom.id, classroom.name]));
   const subjectById = new Map((subjectResult.data ?? []).map((subject) => [subject.id, subject.name]));
 
-  return (
-    <div className="space-y-6">
-      <TeacherPageHeader title="Exams" description="Examinations scheduled for classes assigned to you." />
-      <TeacherPanel title="Class examinations" description="Exam and subject information is read from your school's schedule.">
-        {!exams?.length ? (
-          <TeacherEmptyState title={classIds.length ? 'No examinations scheduled' : 'No classes assigned'} description={classIds.length ? 'There are no examinations scheduled for your assigned classes.' : 'Exam schedules will appear after classes are assigned to you.'} />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[680px] text-left text-sm">
-              <thead className="border-b border-gray-800 text-xs uppercase tracking-wide text-gray-500">
-                <tr>
-                  <th scope="col" className="pb-3 pr-4 font-medium">Exam</th>
-                  <th scope="col" className="pb-3 pr-4 font-medium">Class</th>
-                  <th scope="col" className="pb-3 pr-4 font-medium">Subject</th>
-                  <th scope="col" className="pb-3 pr-4 font-medium">Date</th>
-                  <th scope="col" className="pb-3 pr-4 font-medium">Maximum</th>
-                  <th scope="col" className="pb-3 font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-800">
-                {exams.map((exam) => (
-                  <tr key={exam.id}>
-                    <td className="py-3 pr-4 font-medium text-gray-100">{exam.name}</td>
-                    <td className="py-3 pr-4 text-gray-300">{classById.get(exam.class_id) ?? 'Class unavailable'}</td>
-                    <td className="py-3 pr-4 text-gray-300">{subjectById.get(exam.subject_id) ?? 'Not specified'}</td>
-                    <td className="py-3 pr-4 text-gray-300">{formatTeacherDate(exam.exam_date)}</td>
-                    <td className="py-3 pr-4 text-gray-300">{exam.max_marks}</td>
-                    <td className="py-3 text-gray-300">{exam.is_active ? 'Active' : 'Inactive'}</td>
+    return (
+      <div className="space-y-6">
+        <TeacherPageHeader title="Exams" description="Examinations scheduled for classes assigned to you." />
+        <TeacherPanel title="Class examinations" description="Exam and subject information is read from your school's schedule.">
+          {!exams?.length ? (
+            <TeacherEmptyState title={classIds.length ? 'No examinations scheduled' : 'No classes assigned'} description={classIds.length ? 'There are no examinations scheduled for your assigned classes.' : 'Exam schedules will appear after classes are assigned to you.'} />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[680px] text-left text-sm">
+                <thead className="border-b border-gray-800 text-xs uppercase tracking-wide text-gray-500">
+                  <tr>
+                    <th scope="col" className="pb-3 pr-4 font-medium">Exam</th>
+                    <th scope="col" className="pb-3 pr-4 font-medium">Class</th>
+                    <th scope="col" className="pb-3 pr-4 font-medium">Subject</th>
+                    <th scope="col" className="pb-3 pr-4 font-medium">Date</th>
+                    <th scope="col" className="pb-3 pr-4 font-medium">Maximum</th>
+                    <th scope="col" className="pb-3 font-medium">Status</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </TeacherPanel>
-    </div>
-  );
+                </thead>
+                <tbody className="divide-y divide-gray-800">
+                  {exams.map((exam) => (
+                    <tr key={exam.id}>
+                      <td className="py-3 pr-4 font-medium text-gray-100">{exam.name}</td>
+                      <td className="py-3 pr-4 text-gray-300">{classById.get(exam.class_id) ?? 'Class unavailable'}</td>
+                      <td className="py-3 pr-4 text-gray-300">{subjectById.get(exam.subject_id) ?? 'Not specified'}</td>
+                      <td className="py-3 pr-4 text-gray-300">{formatTeacherDate(exam.exam_date)}</td>
+                      <td className="py-3 pr-4 text-gray-300">{exam.max_marks}</td>
+                      <td className="py-3 text-gray-300">{exam.is_active ? 'Active' : 'Inactive'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </TeacherPanel>
+      </div>
+    );
+  });
 }

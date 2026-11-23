@@ -1,17 +1,33 @@
-import { TeacherEmptyState, TeacherPageHeader, TeacherPanel } from '@/components/dashboard/teacher-ui';
+import {
+  renderTeacherPageSafely,
+  TeacherEmptyState,
+  TeacherErrorState,
+  TeacherPageHeader,
+  TeacherPanel,
+} from '@/components/dashboard/teacher-ui';
 import { formatTeacherDate, requireTeacherContext } from '@/lib/teacher-dashboard';
 
 export default async function TeacherAttendancePage() {
-  const { supabase, teacherId, schoolId } = await requireTeacherContext();
-
-  if (!schoolId) {
+  const context = await requireTeacherContext();
+  if ('error' in context) {
     return (
       <div className="space-y-6">
         <TeacherPageHeader title="Attendance" description="Attendance recorded for your assigned classes." />
-        <TeacherEmptyState title="School assignment pending" description="Attendance records will appear after a school is assigned to your account." />
+        <TeacherErrorState />
       </div>
     );
   }
+  const { supabase, teacherId, schoolId } = context;
+
+  return renderTeacherPageSafely('attendance', async () => {
+    if (!schoolId) {
+      return (
+        <div className="space-y-6">
+          <TeacherPageHeader title="Attendance" description="Attendance recorded for your assigned classes." />
+          <TeacherEmptyState title="School assignment pending" description="Attendance records will appear after a school is assigned to your account." />
+        </div>
+      );
+    }
 
   const { data: assignments, error: assignmentError } = await supabase
     .from('teacher_assignments')
@@ -49,41 +65,42 @@ export default async function TeacherAttendancePage() {
   const classById = new Map((classResult.data ?? []).map((classroom) => [classroom.id, classroom.name]));
   const studentById = new Map((studentResult.data ?? []).map((student) => [student.id, student.admission_number]));
 
-  return (
-    <div className="space-y-6">
-      <TeacherPageHeader title="Attendance" description="Review recorded attendance for your assigned classes." />
-      <TeacherPanel title="Recent attendance" description="Up to 500 most recent records; no attendance is inferred or fabricated.">
-        {!records?.length ? (
-          <TeacherEmptyState title={classIds.length ? 'No attendance records' : 'No classes assigned'} description={classIds.length ? 'Attendance will appear after it is recorded for one of your classes.' : 'Attendance records will appear after classes are assigned to you.'} />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[700px] text-left text-sm">
-              <thead className="border-b border-gray-800 text-xs uppercase tracking-wide text-gray-500">
-                <tr>
-                  <th scope="col" className="pb-3 pr-4 font-medium">Date</th>
-                  <th scope="col" className="pb-3 pr-4 font-medium">Class</th>
-                  <th scope="col" className="pb-3 pr-4 font-medium">Admission number</th>
-                  <th scope="col" className="pb-3 pr-4 font-medium">Status</th>
-                  <th scope="col" className="pb-3 font-medium">Remarks</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-800">
-                {records.map((record) => (
-                  <tr key={record.id}>
-                    <td className="py-3 pr-4 text-gray-200">{formatTeacherDate(record.attendance_date)}</td>
-                    <td className="py-3 pr-4 text-gray-300">{classById.get(record.class_id) ?? 'Class unavailable'}</td>
-                    <td className="py-3 pr-4 text-gray-300">{studentById.get(record.student_id) ?? 'Not provided'}</td>
-                    <td className="py-3 pr-4">
-                      <span className="rounded-full border border-gray-700 bg-gray-800/60 px-2.5 py-1 text-xs capitalize text-gray-200">{record.status}</span>
-                    </td>
-                    <td className="py-3 text-gray-400">{record.remarks || '—'}</td>
+    return (
+      <div className="space-y-6">
+        <TeacherPageHeader title="Attendance" description="Review recorded attendance for your assigned classes." />
+        <TeacherPanel title="Recent attendance" description="Up to 500 most recent records; no attendance is inferred or fabricated.">
+          {!records?.length ? (
+            <TeacherEmptyState title={classIds.length ? 'No attendance records' : 'No classes assigned'} description={classIds.length ? 'Attendance will appear after it is recorded for one of your classes.' : 'Attendance records will appear after classes are assigned to you.'} />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[700px] text-left text-sm">
+                <thead className="border-b border-gray-800 text-xs uppercase tracking-wide text-gray-500">
+                  <tr>
+                    <th scope="col" className="pb-3 pr-4 font-medium">Date</th>
+                    <th scope="col" className="pb-3 pr-4 font-medium">Class</th>
+                    <th scope="col" className="pb-3 pr-4 font-medium">Admission number</th>
+                    <th scope="col" className="pb-3 pr-4 font-medium">Status</th>
+                    <th scope="col" className="pb-3 font-medium">Remarks</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </TeacherPanel>
-    </div>
-  );
+                </thead>
+                <tbody className="divide-y divide-gray-800">
+                  {records.map((record) => (
+                    <tr key={record.id}>
+                      <td className="py-3 pr-4 text-gray-200">{formatTeacherDate(record.attendance_date)}</td>
+                      <td className="py-3 pr-4 text-gray-300">{classById.get(record.class_id) ?? 'Class unavailable'}</td>
+                      <td className="py-3 pr-4 text-gray-300">{studentById.get(record.student_id) ?? 'Not provided'}</td>
+                      <td className="py-3 pr-4">
+                        <span className="rounded-full border border-gray-700 bg-gray-800/60 px-2.5 py-1 text-xs capitalize text-gray-200">{record.status}</span>
+                      </td>
+                      <td className="py-3 text-gray-400">{record.remarks || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </TeacherPanel>
+      </div>
+    );
+  });
 }

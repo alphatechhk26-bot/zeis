@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { unstable_rethrow } from 'next/navigation';
 
 export function TeacherPageHeader({
   title,
@@ -49,4 +50,32 @@ export function TeacherEmptyState({
       <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-gray-400">{description}</p>
     </div>
   );
+}
+
+export function TeacherErrorState({
+  title = 'Unable to load this page',
+  description = 'The requested ZEIS data could not be loaded. Please try again shortly.',
+}: {
+  title?: string;
+  description?: string;
+}) {
+  return (
+    <div role="alert" className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-6">
+      <p className="font-medium text-amber-200">{title}</p>
+      <p className="mt-2 text-sm leading-6 text-gray-400">{description}</p>
+    </div>
+  );
+}
+
+export async function renderTeacherPageSafely(
+  pageName: string,
+  render: () => Promise<ReactNode>,
+) {
+  try {
+    return await render();
+  } catch (error) {
+    unstable_rethrow(error);
+    console.error(`Unable to render teacher ${pageName} page:`, error);
+    return <TeacherErrorState />;
+  }
 }
