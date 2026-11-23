@@ -243,11 +243,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const openai = new OpenAI({ apiKey, timeout: 60_000, maxRetries: 1 });
+    const openai = new OpenAI({
+      apiKey,
+      baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+      timeout: 60_000,
+      maxRetries: 1,
+    });
     let stream: Awaited<ReturnType<typeof openai.chat.completions.create>>;
     try {
       stream = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: 'gemini-3.5-flash-lite',
         messages: [
           { role: 'system', content: SYSTEM_PROMPTS[mode] },
           ...(history ?? [])
