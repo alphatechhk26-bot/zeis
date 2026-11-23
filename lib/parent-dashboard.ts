@@ -92,19 +92,35 @@ export async function loadParentChildren(context: ParentContext): Promise<Parent
 
   const { data: students, error: studentsError } = await supabase
     .from('students')
-    .select('id, admission_number, enrollment_date, parent_id, class_id')
-    .eq('parent_id', userId);
+    .select('id, admission_number, enrollment_date, parent_id')
+    .eq('parent_id', userId)
+    .eq('school_id', schoolId);
   if (studentsError) throw studentsError;
   if (!students?.length) return [];
 
   const studentIds = students.map((student) => student.id);
-  const classIds = [...new Set(students.flatMap((student) => student.class_id ? [student.class_id] : []))];
+  const { data: enrollments, error: enrollmentError } = await supabase
+    .from('student_enrollments')
+    .select('student_id, class_id, enrollment_date')
+    .in('student_id', studentIds)
+    .eq('status', 'active')
+    .order('enrollment_date', { ascending: false, nullsFirst: false });
+  if (enrollmentError) throw enrollmentError;
+
+  const classIdByStudent = new Map<string, string>();
+  for (const enrollment of enrollments ?? []) {
+    if (!classIdByStudent.has(enrollment.student_id)) {
+      classIdByStudent.set(enrollment.student_id, enrollment.class_id);
+    }
+  }
+  const classIds = [...new Set(classIdByStudent.values())];
   const [profileResult, classResult] = await Promise.all([
     supabase
       .from('profiles')
-      .select('id, full_name, school_id')
+      .select('id, full_name, school_id, role')
       .in('id', studentIds)
-      .eq('school_id', schoolId),
+      .eq('school_id', schoolId)
+      .eq('role', 'student'),
     classIds.length
       ? supabase
           .from('classes')
@@ -126,13 +142,14 @@ export async function loadParentChildren(context: ParentContext): Promise<Parent
   return students.flatMap((student) => {
     const fullName = profileById.get(student.id);
     if (!fullName) return [];
+    const classId = classIdByStudent.get(student.id) ?? null;
     return [{
       id: student.id,
       full_name: fullName,
       admission_number: student.admission_number,
       enrollment_date: student.enrollment_date,
-      class_id: student.class_id,
-      class_name: student.class_id ? classById.get(student.class_id) ?? null : null,
+      class_id: classId,
+      class_name: classId ? classById.get(classId) ?? null : null,
     }];
   });
 }

@@ -47,37 +47,19 @@ export default async function ParentAttendancePage() {
     const childIds = children.map((child) => child.id);
     const attendanceResult = await context.supabase
       .from('attendance')
-      .select('id, student_id, date, status, remarks')
+      .select('id, student_id, attendance_date, status, remarks')
       .in('student_id', childIds)
-      .order('date', { ascending: false })
+      .order('attendance_date', { ascending: false })
       .limit(1000);
 
-    let attendanceRows: Array<{
-      id: string;
-      student_id: string;
-      date: string;
-      status: string;
-      remarks: string | null;
-    }> = [];
-    if (attendanceResult.error && ['42703', 'PGRST204'].includes(attendanceResult.error.code ?? '')) {
-      const typedSchemaResult = await context.supabase
-        .from('attendance')
-        .select('id, student_id, attendance_date, status, remarks')
-        .in('student_id', childIds)
-        .order('attendance_date', { ascending: false })
-        .limit(1000);
-      if (typedSchemaResult.error) throw typedSchemaResult.error;
-      attendanceRows = (typedSchemaResult.data ?? []).map((record) => ({
-        id: record.id,
-        student_id: record.student_id,
-        date: record.attendance_date,
-        status: record.status,
-        remarks: record.remarks,
-      }));
-    } else {
-      if (attendanceResult.error) throw attendanceResult.error;
-      attendanceRows = attendanceResult.data ?? [];
-    }
+    if (attendanceResult.error) throw attendanceResult.error;
+    const attendanceRows = (attendanceResult.data ?? []).map((record) => ({
+      id: record.id,
+      student_id: record.student_id,
+      date: record.attendance_date,
+      status: record.status,
+      remarks: record.remarks,
+    }));
 
     const childById = new Map(children.map((child) => [child.id, child.full_name]));
     const present = attendanceRows.filter((record) => record.status === 'present').length;

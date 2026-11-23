@@ -200,7 +200,6 @@ export type Database = {
           check_out_time: string | null
           class_id: string
           created_at: string
-          date: string
           id: string
           remarks: string | null
           school_id: string
@@ -216,7 +215,6 @@ export type Database = {
           check_out_time?: string | null
           class_id: string
           created_at?: string
-          date?: string
           id?: string
           remarks?: string | null
           school_id: string
@@ -232,7 +230,6 @@ export type Database = {
           check_out_time?: string | null
           class_id?: string
           created_at?: string
-          date?: string
           id?: string
           remarks?: string | null
           school_id?: string
@@ -1702,7 +1699,6 @@ export type Database = {
       students: {
         Row: {
           admission_number: string | null
-          class_id: string | null
           created_at: string
           enrollment_date: string | null
           id: string
@@ -1713,7 +1709,6 @@ export type Database = {
         }
         Insert: {
           admission_number?: string | null
-          class_id?: string | null
           created_at?: string
           enrollment_date?: string | null
           id: string
@@ -1724,7 +1719,6 @@ export type Database = {
         }
         Update: {
           admission_number?: string | null
-          class_id?: string | null
           created_at?: string
           enrollment_date?: string | null
           id?: string
