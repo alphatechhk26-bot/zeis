@@ -25,6 +25,12 @@ const PROTECTED_ROUTES: Record<string, string[]> = {
   '/dashboard/parent': ['parent'],
 };
 
+function matchesRoutePrefix(pathname: string, prefix: string) {
+  const normalizedPathname = pathname.replace(/\/+$/, '') || '/';
+  const normalizedPrefix = prefix.replace(/\/+$/, '') || '/';
+  return normalizedPathname === normalizedPrefix || normalizedPathname.startsWith(`${normalizedPrefix}/`);
+}
+
 export async function proxy(request: NextRequest) {
   // Create a response object to modify cookies
   let response = NextResponse.next({
@@ -72,7 +78,7 @@ export async function proxy(request: NextRequest) {
 
   // 1. If no user, redirect to login for protected routes
   const isProtectedRoute = Object.keys(PROTECTED_ROUTES).some(prefix =>
-    pathname.startsWith(prefix)
+    matchesRoutePrefix(pathname, prefix)
   );
 
   if (!user) {
@@ -113,7 +119,7 @@ export async function proxy(request: NextRequest) {
   // Check if the current path is under one of the protected prefixes
   let matchedPrefix: string | null = null;
   for (const [prefix, allowedRoles] of Object.entries(PROTECTED_ROUTES)) {
-    if (pathname.startsWith(prefix)) {
+    if (matchesRoutePrefix(pathname, prefix)) {
       matchedPrefix = prefix;
       // If the user's role is not allowed for this prefix, redirect to their own dashboard
       if (!allowedRoles.includes(userRole)) {

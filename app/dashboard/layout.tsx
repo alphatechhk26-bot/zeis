@@ -284,7 +284,14 @@ export default function DashboardLayout({
 
           <nav className="flex-1 overflow-y-auto p-4 space-y-1">
             {navItems.map((item) => {
-              const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
+              const normalizedPathname = pathname.replace(/\/+$/, '') || '/';
+              const normalizedHref = item.href.replace(/\/+$/, '') || '/';
+              const dashboardHomeHref = profile?.role === 'super_admin'
+                ? '/dashboard/super-admin'
+                : `/dashboard/${profile?.role}`;
+              const isDashboardHome = normalizedHref === dashboardHomeHref;
+              const isActive = normalizedPathname === normalizedHref
+                || (!isDashboardHome && normalizedPathname.startsWith(`${normalizedHref}/`));
               return (
                 <Link
                   key={item.href}
