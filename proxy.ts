@@ -20,7 +20,7 @@ const ROLE_DASHBOARD_MAP: Record<string, string> = {
 const PROTECTED_ROUTES: Record<string, string[]> = {
   '/dashboard/super-admin': ['super_admin'],
   '/dashboard/admin': ['admin', 'super_admin'], // admins can also access admin dashboard
-  '/dashboard/teacher': ['teacher', 'admin', 'super_admin'],
+  '/dashboard/teacher': ['teacher'],
   '/dashboard/student': ['student', 'parent', 'teacher', 'admin', 'super_admin'], // parents might view student dashboard? We'll keep to role exactly.
   '/dashboard/parent': ['parent', 'admin', 'super_admin'],
 };
