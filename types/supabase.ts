@@ -200,6 +200,7 @@ export type Database = {
           check_out_time: string | null
           class_id: string
           created_at: string
+          date: string
           id: string
           remarks: string | null
           school_id: string
@@ -215,6 +216,7 @@ export type Database = {
           check_out_time?: string | null
           class_id: string
           created_at?: string
+          date?: string
           id?: string
           remarks?: string | null
           school_id: string
@@ -230,6 +232,7 @@ export type Database = {
           check_out_time?: string | null
           class_id?: string
           created_at?: string
+          date?: string
           id?: string
           remarks?: string | null
           school_id?: string
@@ -1699,27 +1702,33 @@ export type Database = {
       students: {
         Row: {
           admission_number: string | null
+          class_id: string | null
           created_at: string
           enrollment_date: string | null
           id: string
+          parent_id: string | null
           school_id: string
           status: Database["public"]["Enums"]["enrollment_status"] | null
           updated_at: string
         }
         Insert: {
           admission_number?: string | null
+          class_id?: string | null
           created_at?: string
           enrollment_date?: string | null
           id: string
+          parent_id?: string | null
           school_id: string
           status?: Database["public"]["Enums"]["enrollment_status"] | null
           updated_at?: string
         }
         Update: {
           admission_number?: string | null
+          class_id?: string | null
           created_at?: string
           enrollment_date?: string | null
           id?: string
+          parent_id?: string | null
           school_id?: string
           status?: Database["public"]["Enums"]["enrollment_status"] | null
           updated_at?: string
@@ -1729,6 +1738,13 @@ export type Database = {
             foreignKeyName: "students_id_fkey"
             columns: ["id"]
             isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "students_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
