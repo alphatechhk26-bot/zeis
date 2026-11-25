@@ -1042,6 +1042,7 @@ export type Database = {
       }
       lms_courses: {
         Row: {
+          class_id: string | null
           created_at: string
           created_by: string | null
           description: string | null
@@ -1050,11 +1051,13 @@ export type Database = {
           is_published: boolean | null
           name: string
           school_id: string
+          subject_id: string | null
           start_date: string | null
           thumbnail_url: string | null
           updated_at: string
         }
         Insert: {
+          class_id?: string | null
           created_at?: string
           created_by?: string | null
           description?: string | null
@@ -1063,11 +1066,13 @@ export type Database = {
           is_published?: boolean | null
           name: string
           school_id: string
+          subject_id?: string | null
           start_date?: string | null
           thumbnail_url?: string | null
           updated_at?: string
         }
         Update: {
+          class_id?: string | null
           created_at?: string
           created_by?: string | null
           description?: string | null
@@ -1076,16 +1081,31 @@ export type Database = {
           is_published?: boolean | null
           name?: string
           school_id?: string
+          subject_id?: string | null
           start_date?: string | null
           thumbnail_url?: string | null
           updated_at?: string
         }
         Relationships: [
           {
+            foreignKeyName: "lms_courses_class_id_fkey"
+            columns: ["class_id"]
+            isOneToOne: false
+            referencedRelation: "classes"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "lms_courses_created_by_fkey"
             columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lms_courses_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
           {
@@ -2038,7 +2058,7 @@ export type Database = {
         | "withdrawn"
         | "suspended"
       exam_type: "quiz" | "midterm" | "final" | "assignment" | "practical"
-      invoice_status: "draft" | "issued" | "paid" | "overdue" | "cancelled"
+      invoice_status: "draft" | "issued" | "paid" | "overdue" | "cancelled" | "partial" | "unpaid"
       payment_method:
         | "cash"
         | "bank_transfer"
@@ -2193,7 +2213,7 @@ export const Constants = {
         "suspended",
       ],
       exam_type: ["quiz", "midterm", "final", "assignment", "practical"],
-      invoice_status: ["draft", "issued", "paid", "overdue", "cancelled"],
+      invoice_status: ["draft", "issued", "paid", "overdue", "cancelled", "partial", "unpaid"],
       payment_method: [
         "cash",
         "bank_transfer",

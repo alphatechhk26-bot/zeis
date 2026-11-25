@@ -1,92 +1,81 @@
-import Link from 'next/link';
-import { BookOpen, Play } from 'lucide-react';
+import { TeacherLmsManager } from '@/components/dashboard/teacher-lms-manager';
 import {
   renderTeacherPageSafely,
-  TeacherEmptyState,
   TeacherErrorState,
   TeacherPageHeader,
   TeacherPanel,
 } from '@/components/dashboard/teacher-ui';
-import { requireTeacherContext } from '@/lib/teacher-dashboard';
+import { getTeacherAssignmentOptions, requireTeacherContext } from '@/lib/teacher-dashboard';
 
 export default async function TeacherLmsPage() {
   const context = await requireTeacherContext();
   if ('error' in context) {
     return (
       <div className="space-y-6">
-        <TeacherPageHeader title="Learning management" description="Courses and learning resources available to your school." />
+        <TeacherPageHeader title="Learning management" description="Create and manage courses and lessons for your assigned classes." />
         <TeacherErrorState />
       </div>
     );
   }
-  const { supabase, teacherId, schoolId } = context;
 
   return renderTeacherPageSafely('LMS', async () => {
-    if (!schoolId) {
-      return (
-        <div className="space-y-6">
-          <TeacherPageHeader title="Learning management" description="Courses and learning resources available to your school." />
-          <TeacherEmptyState title="School assignment pending" description="Learning resources will appear after a school is assigned to your account." />
-        </div>
-      );
-    }
+    const assignments = await getTeacherAssignmentOptions(context);
+    const assignedClassSubjects = new Set(assignments.map((item) => `${item.classId}:${item.subjectId}`));
+    const { data: courseRecords, error: courseError } = await context.supabase.from('lms_courses')
+      .select('id, name, description, is_published, class_id, subject_id')
+      .eq('school_id', context.schoolId)
+      .eq('created_by', context.teacherId)
+      .order('created_at', { ascending: false });
+    if (courseError) throw new Error(`Unable to load your courses: ${courseError.message}`);
 
-  const { data: courses, error: courseError } = await supabase
-    .from('lms_courses')
-    .select('id, name, description, is_published')
-    .eq('school_id', schoolId)
-    .or(`is_published.eq.true,created_by.eq.${teacherId}`)
-    .order('created_at', { ascending: false });
-  if (courseError) throw new Error(`Unable to load school learning resources: ${courseError.message}`);
-
-  const courseIds = (courses ?? []).map((course) => course.id);
-  const { data: lessons, error: lessonError } =
-    courseIds.length > 0
-      ? await supabase.from('lessons').select('id, course_id').in('course_id', courseIds).eq('is_published', true)
+    const validCourses = (courseRecords ?? []).filter((course) =>
+      course.class_id && course.subject_id && assignedClassSubjects.has(`${course.class_id}:${course.subject_id}`)
+    );
+    const courseIds = validCourses.map((course) => course.id);
+    const { data: lessons, error: lessonError } = courseIds.length
+      ? await context.supabase.from('lessons')
+          .select('id, course_id, title, content, video_url, is_published, order_index')
+          .in('course_id', courseIds)
+          .order('order_index', { ascending: true })
       : { data: [], error: null };
-  if (lessonError) throw new Error(`Unable to load published lesson counts: ${lessonError.message}`);
+    if (lessonError) throw new Error(`Unable to load course lessons: ${lessonError.message}`);
 
-  const lessonCountByCourse = new Map<string, number>();
-  for (const lesson of lessons ?? []) {
-    lessonCountByCourse.set(lesson.course_id, (lessonCountByCourse.get(lesson.course_id) ?? 0) + 1);
-  }
+    const courseAssignments = new Map(
+      assignments.map((assignment) => [`${assignment.classId}:${assignment.subjectId}`, assignment]),
+    );
+    const lessonsByCourse = new Map<string, typeof lessons>();
+    for (const lesson of lessons ?? []) {
+      const current = lessonsByCourse.get(lesson.course_id) ?? [];
+      current.push(lesson);
+      lessonsByCourse.set(lesson.course_id, current);
+    }
+    const courses = validCourses.flatMap((course) => {
+      if (!course.class_id || !course.subject_id) return [];
+      const assignment = courseAssignments.get(`${course.class_id}:${course.subject_id}`);
+      if (!assignment) return [];
+      return [{
+        id: course.id,
+        name: course.name,
+        description: course.description,
+        isPublished: course.is_published,
+        className: assignment.className,
+        subjectName: assignment.subjectName,
+        lessons: (lessonsByCourse.get(course.id) ?? []).map((lesson) => ({
+          id: lesson.id,
+          title: lesson.title,
+          content: lesson.content,
+          videoUrl: lesson.video_url,
+          isPublished: lesson.is_published,
+          orderIndex: lesson.order_index,
+        })),
+      }];
+    });
 
     return (
       <div className="space-y-6">
-        <TeacherPageHeader title="Learning management" description="Browse your courses and published resources available to your school." />
-        <TeacherPanel title="Learning resources" description="Published school courses and courses you created.">
-          {!courses?.length ? (
-            <TeacherEmptyState title="No learning resources" description="Published courses and your own courses will appear here." />
-          ) : (
-            <ul className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {courses.map((course) => (
-                <li key={course.id} className="flex flex-col rounded-xl border border-gray-800 bg-gray-950/60 p-4">
-                  <div className="flex items-start gap-3">
-                    <BookOpen aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 text-cyan-300" />
-                    <div className="min-w-0">
-                      <h3 className="font-medium text-white">{course.name}</h3>
-                      <p className="mt-1 text-xs text-gray-500">
-                        {lessonCountByCourse.get(course.id) ?? 0} published lessons
-                        {course.is_published ? ' · Published' : ' · Your draft'}
-                      </p>
-                    </div>
-                  </div>
-                  {course.description && <p className="mt-3 line-clamp-3 text-sm leading-6 text-gray-400">{course.description}</p>}
-                  {course.is_published ? (
-                    <Link
-                      href={`/lms/course/${course.id}`}
-                      className="mt-5 inline-flex items-center gap-2 self-start text-sm font-medium text-cyan-300 transition hover:text-cyan-200"
-                    >
-                      <Play aria-hidden="true" className="h-4 w-4" />
-                      Open course
-                    </Link>
-                  ) : (
-                    <p className="mt-5 text-xs text-gray-500">Publish this course to make it available to learners.</p>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
+        <TeacherPageHeader title="Learning management" description="Create and manage courses and lessons for your assigned classes." />
+        <TeacherPanel title="Your learning materials" description="Courses and lessons are scoped to your own teacher account and verified class-subject assignments.">
+          <TeacherLmsManager assignments={assignments} courses={courses} />
         </TeacherPanel>
       </div>
     );

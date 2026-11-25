@@ -6,9 +6,9 @@ import {
   AdminPanel,
   AdminStatCard,
   formatAdminCurrency,
-  formatAdminDate,
   renderAdminPageSafely,
 } from '@/components/dashboard/admin-ui';
+import { FinanceManager } from '@/components/dashboard/finance-manager';
 import { requireAdminContext } from '@/lib/admin-dashboard';
 
 export default async function AdminFinancePage() {
@@ -16,137 +16,159 @@ export default async function AdminFinancePage() {
   if ('error' in context) {
     return (
       <div className="space-y-6">
-        <AdminPageHeader title="Finance" description="Review invoices, payments, and configured fee structures." />
+        <AdminPageHeader title="Finance" description="Manage fee structures, invoices and payments for your school." />
         <AdminErrorState />
       </div>
     );
   }
-  const { supabase, role, schoolId } = context;
+  const { supabase, schoolId } = context;
 
   return renderAdminPageSafely('finance', async () => {
-    if (role === 'admin' && !schoolId) {
+    if (!schoolId) {
       return (
         <div className="space-y-6">
-          <AdminPageHeader title="Finance" description="Review invoices, payments, and configured fee structures." />
-          <AdminEmptyState title="School assignment required" description="Your admin profile is not assigned to a school, so finance records cannot be loaded." />
+          <AdminPageHeader title="Finance" description="Manage fee structures, invoices and payments for your school." />
+          <AdminEmptyState title="School assignment required" description="Your administrator profile must be assigned to a school before managing finance records." />
         </div>
       );
     }
 
-    let invoicesQuery = supabase
-      .from('invoices')
-      .select('id, invoice_number, student_id, total_amount, amount_paid, status, issue_date, due_date, school_id')
-      .order('issue_date', { ascending: false })
-      .limit(500);
-    let paymentsQuery = supabase
-      .from('payments')
-      .select('id, invoice_id, student_id, amount, payment_date, payment_method, reference, school_id')
-      .order('payment_date', { ascending: false })
-      .limit(500);
-    let feesQuery = supabase
-      .from('fee_structures')
-      .select('id, fee_name, amount, due_date, is_mandatory, school_id')
-      .order('created_at', { ascending: false })
-      .limit(500);
-
-    if (role === 'admin' && schoolId) {
-      invoicesQuery = invoicesQuery.eq('school_id', schoolId);
-      paymentsQuery = paymentsQuery.eq('school_id', schoolId);
-      feesQuery = feesQuery.eq('school_id', schoolId);
-    }
-
-    const [invoiceResult, paymentResult, feeResult] = await Promise.all([
-      invoicesQuery,
-      paymentsQuery,
-      feesQuery,
+    const [invoicesResult, paymentsResult, feesResult, yearsResult, classesResult, studentsResult] = await Promise.all([
+      supabase
+        .from('invoices')
+        .select('id, school_id, invoice_number, student_id, academic_year_id, term_id, issue_date, due_date, total_amount, amount_paid, status, notes')
+        .eq('school_id', schoolId)
+        .order('issue_date', { ascending: false })
+        .limit(500),
+      supabase
+        .from('payments')
+        .select('id, school_id, invoice_id, student_id, amount, payment_date, payment_method, transaction_id, reference, notes')
+        .eq('school_id', schoolId)
+        .order('payment_date', { ascending: false })
+        .limit(500),
+      supabase
+        .from('fee_structures')
+        .select('id, school_id, fee_name, description, amount, academic_year_id, class_id, term_id, due_date, is_mandatory, created_at, updated_at')
+        .eq('school_id', schoolId)
+        .order('created_at', { ascending: false })
+        .limit(500),
+      supabase
+        .from('academic_years')
+        .select('id, name, school_id, start_date, end_date')
+        .eq('school_id', schoolId)
+        .order('start_date', { ascending: false }),
+      supabase
+        .from('classes')
+        .select('id, name, school_id')
+        .eq('school_id', schoolId)
+        .order('name'),
+      supabase
+        .from('students')
+        .select('id, school_id, admission_number, status')
+        .eq('school_id', schoolId)
+        .eq('status', 'active')
+        .order('admission_number')
+        .limit(2000),
     ]);
-    if (invoiceResult.error) throw invoiceResult.error;
-    if (paymentResult.error) throw paymentResult.error;
-    if (feeResult.error) throw feeResult.error;
+    if (invoicesResult.error) throw invoicesResult.error;
+    if (paymentsResult.error) throw paymentsResult.error;
+    if (feesResult.error) throw feesResult.error;
+    if (yearsResult.error) throw yearsResult.error;
+    if (classesResult.error) throw classesResult.error;
+    if (studentsResult.error) throw studentsResult.error;
 
-    const invoices = invoiceResult.data ?? [];
-    const payments = paymentResult.data ?? [];
-    const fees = feeResult.data ?? [];
+    const years = yearsResult.data ?? [];
+    const yearIds = years.map((year) => year.id);
+    const { data: terms, error: termsError } = yearIds.length
+      ? await supabase
+          .from('terms')
+          .select('id, academic_year_id, name, start_date, end_date')
+          .in('academic_year_id', yearIds)
+          .order('term_number')
+      : { data: [], error: null };
+    if (termsError) throw termsError;
+
+    const classIds = (classesResult.data ?? []).map((row) => row.id);
+    const { data: enrollmentRows, error: enrollmentError } = classIds.length && yearIds.length
+      ? await supabase
+          .from('student_enrollments')
+          .select('student_id, class_id, academic_year_id, term_id')
+          .in('class_id', classIds)
+          .in('academic_year_id', yearIds)
+          .eq('status', 'active')
+      : { data: [], error: null };
+    if (enrollmentError) throw enrollmentError;
+
+    const activeStudentIds = new Set((studentsResult.data ?? []).map((student) => student.id));
+    const enrollments = (enrollmentRows ?? []).filter((row) => activeStudentIds.has(row.student_id));
+
+    const studentIds = [...new Set([
+      ...(studentsResult.data ?? []).map((student) => student.id),
+      ...(invoicesResult.data ?? []).map((invoice) => invoice.student_id),
+      ...(paymentsResult.data ?? []).map((payment) => payment.student_id),
+    ])];
+    const { data: profiles, error: profilesError } = studentIds.length
+      ? await supabase
+          .from('profiles')
+          .select('id, full_name, school_id')
+          .in('id', studentIds)
+          .eq('school_id', schoolId)
+      : { data: [], error: null };
+    if (profilesError) throw profilesError;
+    const nameById = new Map((profiles ?? []).map((profile) => [profile.id, profile.full_name]));
+    const students = (studentsResult.data ?? []).map((student) => ({
+      id: student.id,
+      admission_number: student.admission_number ?? '—',
+      full_name: nameById.get(student.id) ?? 'Student',
+    }));
+
+    const invoices = invoicesResult.data ?? [];
+    const payments = paymentsResult.data ?? [];
+    const fees = feesResult.data ?? [];
     const billed = invoices.reduce((sum, invoice) => sum + invoice.total_amount, 0);
-    const outstanding = invoices.reduce((sum, invoice) => {
-      if (invoice.status === 'cancelled') return sum;
-      return sum + Math.max(invoice.total_amount - (invoice.amount_paid ?? 0), 0);
-    }, 0);
+    const outstanding = invoices.reduce((sum, invoice) => (
+      invoice.status === 'cancelled'
+        ? sum
+        : sum + Math.max(invoice.total_amount - (invoice.amount_paid ?? 0), 0)
+    ), 0);
     const recentPaymentsTotal = payments.reduce((sum, payment) => sum + payment.amount, 0);
 
     return (
       <div className="space-y-6">
-        <AdminPageHeader title="Finance" description="Review financial records scoped to your authorized school." />
+        <AdminPageHeader title="Finance" description="Manage fee structures, invoices and payment records within your authenticated school." />
         <section aria-label="Finance summary" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <AdminStatCard label="Billed" value={formatAdminCurrency(billed)} detail={`Loaded invoices: ${invoices.length}`} icon={FileText} />
           <AdminStatCard label="Outstanding" value={formatAdminCurrency(outstanding)} detail="Based on loaded non-cancelled invoices" icon={Wallet} />
-          <AdminStatCard label="Recent payments" value={formatAdminCurrency(recentPaymentsTotal)} detail={`Loaded payments: ${payments.length}`} icon={Banknote} />
+          <AdminStatCard label="Payments received" value={formatAdminCurrency(recentPaymentsTotal)} detail={`Loaded payments: ${payments.length}`} icon={Banknote} />
         </section>
-        <AdminPanel title="Invoices" description="Most recent invoices (up to 500).">
-          {!invoices.length ? (
-            <AdminEmptyState title="No invoices found" description="Invoices will appear here when the database contains records for your scope." />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[700px] text-left text-sm">
-                <thead className="border-b border-gray-800 text-xs uppercase tracking-wide text-gray-500">
-                  <tr>
-                    <th scope="col" className="pb-3 pr-4 font-medium">Invoice</th>
-                    <th scope="col" className="pb-3 pr-4 font-medium">Student ID</th>
-                    <th scope="col" className="pb-3 pr-4 font-medium">Issued</th>
-                    <th scope="col" className="pb-3 pr-4 font-medium">Due</th>
-                    <th scope="col" className="pb-3 pr-4 font-medium">Amount</th>
-                    <th scope="col" className="pb-3 font-medium">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-800">
-                  {invoices.map((invoice) => (
-                    <tr key={invoice.id}>
-                      <td className="py-3 pr-4 font-medium text-gray-100">{invoice.invoice_number}</td>
-                      <td className="py-3 pr-4 text-gray-300">{invoice.student_id}</td>
-                      <td className="py-3 pr-4 text-gray-300">{formatAdminDate(invoice.issue_date)}</td>
-                      <td className="py-3 pr-4 text-gray-300">{formatAdminDate(invoice.due_date)}</td>
-                      <td className="py-3 pr-4 text-gray-300">{formatAdminCurrency(invoice.total_amount)}</td>
-                      <td className="py-3"><span className="rounded-full border border-gray-700 bg-gray-800/60 px-2.5 py-1 text-xs capitalize text-gray-200">{invoice.status ?? 'Unknown'}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </AdminPanel>
-        <AdminPanel title="Payments and fee structures" description="Payments and fees currently configured in the database.">
-          <div className="grid gap-6 xl:grid-cols-2">
-            <div>
-              <h3 className="mb-3 text-sm font-medium text-gray-200">Recent payments</h3>
-              {!payments.length ? (
-                <AdminEmptyState title="No payments found" description="Recorded payments will appear here." />
-              ) : (
-                <ul className="divide-y divide-gray-800">
-                  {payments.slice(0, 10).map((payment) => (
-                    <li key={payment.id} className="flex flex-wrap justify-between gap-2 py-3 text-sm">
-                      <span className="text-gray-300">{formatAdminDate(payment.payment_date)} · {payment.payment_method}</span>
-                      <span className="font-medium text-gray-100">{formatAdminCurrency(payment.amount)}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-            <div>
-              <h3 className="mb-3 text-sm font-medium text-gray-200">Fee structures</h3>
-              {!fees.length ? (
-                <AdminEmptyState title="No fee structures found" description="No fee structures are available in the generated database schema for this scope." />
-              ) : (
-                <ul className="divide-y divide-gray-800">
-                  {fees.slice(0, 10).map((fee) => (
-                    <li key={fee.id} className="flex flex-wrap justify-between gap-2 py-3 text-sm">
-                      <span className="text-gray-300">{fee.fee_name}{fee.is_mandatory ? ' · Required' : ''}</span>
-                      <span className="font-medium text-gray-100">{formatAdminCurrency(fee.amount)}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
+        <AdminPanel title="School finance" description="Fee structures, invoice generation and payment recording are limited to this school.">
+          <FinanceManager
+            initialInvoices={invoices.map((invoice) => ({
+              ...invoice,
+              student_name: nameById.get(invoice.student_id) ?? 'Student',
+            }))}
+            initialPayments={payments.map((payment) => ({
+              ...payment,
+              student_name: nameById.get(payment.student_id) ?? 'Student',
+            }))}
+            initialFees={fees}
+            classes={(classesResult.data ?? []).map((row) => ({ id: row.id, label: row.name }))}
+            academicYears={years.map((row) => ({
+              id: row.id,
+              label: row.name,
+              start_date: row.start_date,
+              end_date: row.end_date,
+            }))}
+            terms={(terms ?? []).map((row) => ({
+              id: row.id,
+              label: row.name,
+              academic_year_id: row.academic_year_id,
+              start_date: row.start_date,
+              end_date: row.end_date,
+            }))}
+            students={students}
+            enrollments={enrollments}
+          />
         </AdminPanel>
       </div>
     );

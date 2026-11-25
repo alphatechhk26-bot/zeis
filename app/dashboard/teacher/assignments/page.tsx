@@ -1,82 +1,142 @@
+import { TeacherAssignmentsManager } from '@/components/dashboard/teacher-assignments-manager';
 import {
   renderTeacherPageSafely,
-  TeacherEmptyState,
   TeacherErrorState,
   TeacherPageHeader,
   TeacherPanel,
 } from '@/components/dashboard/teacher-ui';
-import { formatTeacherDate, requireTeacherContext } from '@/lib/teacher-dashboard';
+import { getTeacherAssignmentOptions, requireTeacherContext } from '@/lib/teacher-dashboard';
 
 export default async function TeacherAssignmentsPage() {
   const context = await requireTeacherContext();
   if ('error' in context) {
     return (
       <div className="space-y-6">
-        <TeacherPageHeader title="Assignments" description="Assignments in your own courses." />
+        <TeacherPageHeader title="Assignments" description="Create assignments and quizzes, review submissions, and provide feedback." />
         <TeacherErrorState />
       </div>
     );
   }
-  const { supabase, teacherId, schoolId } = context;
 
   return renderTeacherPageSafely('assignments', async () => {
-    if (!schoolId) {
-      return (
-        <div className="space-y-6">
-          <TeacherPageHeader title="Assignments" description="Assignments in your own courses." />
-          <TeacherEmptyState title="School assignment pending" description="Assignments will appear after a school is assigned to your account." />
-        </div>
-      );
+    const assignmentOptions = await getTeacherAssignmentOptions(context);
+    const allowed = new Set(assignmentOptions.map((item) => `${item.classId}:${item.subjectId}`));
+    const { data: courseRecords, error: courseError } = await context.supabase.from('lms_courses')
+      .select('id, name, class_id, subject_id')
+      .eq('school_id', context.schoolId)
+      .eq('created_by', context.teacherId);
+    if (courseError) throw new Error(`Unable to load your courses: ${courseError.message}`);
+    const validCourses = (courseRecords ?? []).filter((course) =>
+      course.class_id && course.subject_id && allowed.has(`${course.class_id}:${course.subject_id}`)
+    );
+    const courseIds = validCourses.map((course) => course.id);
+
+    const [assignmentResult, quizResult] = courseIds.length
+      ? await Promise.all([
+          context.supabase.from('assignments')
+            .select('id, title, description, due_date, max_score, is_published, course_id')
+            .in('course_id', courseIds)
+            .order('due_date', { ascending: true }),
+          context.supabase.from('quizzes')
+            .select('id, title, course_id, is_published')
+            .in('course_id', courseIds)
+            .order('created_at', { ascending: false }),
+        ])
+      : [{ data: [], error: null }, { data: [], error: null }];
+    if (assignmentResult.error) throw new Error(`Unable to load assignments: ${assignmentResult.error.message}`);
+    if (quizResult.error) throw new Error(`Unable to load quizzes: ${quizResult.error.message}`);
+
+    const assignmentIds = (assignmentResult.data ?? []).map((assignment) => assignment.id);
+    const { data: submissionRecords, error: submissionError } = assignmentIds.length
+      ? await context.supabase.from('submissions')
+        .select('id, assignment_id, student_id, submission_text, file_urls, submitted_at, grade, feedback')
+          .in('assignment_id', assignmentIds)
+          .order('submitted_at', { ascending: false })
+      : { data: [], error: null };
+    if (submissionError) throw new Error(`Unable to load student submissions: ${submissionError.message}`);
+
+    const studentIds = [...new Set((submissionRecords ?? []).map((submission) => submission.student_id))];
+    const assignedCourseClassIds = [...new Set(validCourses.flatMap((course) => course.class_id ? [course.class_id] : []))];
+    const [studentsResult, profilesResult] = studentIds.length
+      ? await Promise.all([
+          context.supabase.from('students').select('id, admission_number').eq('school_id', context.schoolId).in('id', studentIds),
+          context.supabase.from('profiles').select('id, full_name').eq('school_id', context.schoolId).in('id', studentIds),
+        ])
+      : [{ data: [], error: null }, { data: [], error: null }];
+    if (studentsResult.error) throw new Error(`Unable to load submission student records: ${studentsResult.error.message}`);
+    if (profilesResult.error) throw new Error(`Unable to load submission student names: ${profilesResult.error.message}`);
+
+    const courseById = new Map(validCourses.map((course) => [course.id, course.name]));
+    const assignmentById = new Map((assignmentResult.data ?? []).map((assignment) => [assignment.id, assignment]));
+    const studentById = new Map((studentsResult.data ?? []).map((student) => [student.id, student]));
+    const profileById = new Map((profilesResult.data ?? []).map((profile) => [profile.id, profile.full_name]));
+    const { data: activeEnrollments, error: enrollmentError } = studentIds.length && assignedCourseClassIds.length
+      ? await context.supabase.from('student_enrollments')
+          .select('student_id, class_id')
+          .in('student_id', studentIds)
+          .in('class_id', assignedCourseClassIds)
+          .eq('status', 'active')
+      : { data: [], error: null };
+    if (enrollmentError) throw new Error(`Unable to verify submission enrollments: ${enrollmentError.message}`);
+    const enrollmentPairs = new Set((activeEnrollments ?? []).map((row) => `${row.student_id}:${row.class_id}`));
+    const submissionsByAssignment = new Map<string, {
+      id: string;
+      studentName: string;
+      admissionNumber: string | null;
+      submissionText: string | null;
+      fileUrls: string[] | null;
+      submittedAt: string;
+      grade: number | null;
+      feedback: string | null;
+    }[]>();
+
+    for (const submission of submissionRecords ?? []) {
+      const assignment = assignmentById.get(submission.assignment_id);
+      const course = assignment?.course_id ? validCourses.find((row) => row.id === assignment.course_id) : null;
+      const student = studentById.get(submission.student_id);
+      if (!assignment || !course?.class_id || !student) continue;
+      if (!enrollmentPairs.has(`${submission.student_id}:${course.class_id}`)) continue;
+
+      const rows = submissionsByAssignment.get(assignment.id) ?? [];
+      rows.push({
+        id: submission.id,
+        studentName: profileById.get(student.id) ?? 'Student',
+        admissionNumber: student.admission_number,
+        submissionText: submission.submission_text,
+        fileUrls: submission.file_urls,
+        submittedAt: submission.submitted_at,
+        grade: submission.grade,
+        feedback: submission.feedback,
+      });
+      submissionsByAssignment.set(assignment.id, rows);
     }
 
-  const { data: courses, error: courseError } = await supabase
-    .from('lms_courses')
-    .select('id, name')
-    .eq('school_id', schoolId)
-    .eq('created_by', teacherId);
-  if (courseError) throw new Error(`Unable to load your courses: ${courseError.message}`);
-
-  const courseIds = (courses ?? []).map((course) => course.id);
-  const { data: assignments, error: assignmentError } =
-    courseIds.length > 0
-      ? await supabase
-          .from('assignments')
-          .select('id, title, description, due_date, max_score, is_published, course_id')
-          .in('course_id', courseIds)
-          .order('due_date', { ascending: true })
-      : { data: [], error: null };
-  if (assignmentError) throw new Error(`Unable to load your course assignments: ${assignmentError.message}`);
-
-  const courseById = new Map((courses ?? []).map((course) => [course.id, course.name]));
+    const assignments = (assignmentResult.data ?? []).flatMap((assignment) => {
+      if (!assignment.course_id) return [];
+      return [{
+        id: assignment.id,
+        title: assignment.title,
+        description: assignment.description,
+        dueDate: assignment.due_date,
+        maxScore: assignment.max_score,
+        isPublished: assignment.is_published,
+        courseName: courseById.get(assignment.course_id) ?? 'Course',
+        submissions: submissionsByAssignment.get(assignment.id) ?? [],
+      }];
+    });
+    const quizzes = (quizResult.data ?? []).flatMap((quiz) => quiz.course_id
+      ? [{ id: quiz.id, title: quiz.title, courseName: courseById.get(quiz.course_id) ?? 'Course', isPublished: quiz.is_published }]
+      : []);
 
     return (
       <div className="space-y-6">
-        <TeacherPageHeader title="Assignments" description="Review assignments associated with courses you created." />
-        <TeacherPanel title="Your course assignments" description="Assignment editing is not enabled here because the existing schema has no verified teacher-owned assignment workflow.">
-          {!assignments?.length ? (
-            <TeacherEmptyState title="No course assignments" description="Assignments in courses created by you will appear here." />
-          ) : (
-            <ul className="space-y-3">
-              {assignments.map((assignment) => (
-                <li key={assignment.id} className="rounded-xl border border-gray-800 bg-gray-950/60 p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <h3 className="font-medium text-white">{assignment.title}</h3>
-                      <p className="mt-1 text-sm text-gray-400">{assignment.course_id ? courseById.get(assignment.course_id) ?? 'Course unavailable' : 'Course not specified'}</p>
-                    </div>
-                    <span className={`rounded-full border px-2.5 py-1 text-xs ${assignment.is_published ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-gray-700 bg-gray-800/60 text-gray-300'}`}>
-                      {assignment.is_published ? 'Published' : 'Draft'}
-                    </span>
-                  </div>
-                  {assignment.description && <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-gray-300">{assignment.description}</p>}
-                  <dl className="mt-4 flex flex-wrap gap-x-6 gap-y-2 border-t border-gray-800 pt-3 text-xs">
-                    <div className="flex gap-2"><dt className="text-gray-500">Due</dt><dd className="text-gray-300">{formatTeacherDate(assignment.due_date)}</dd></div>
-                    <div className="flex gap-2"><dt className="text-gray-500">Maximum score</dt><dd className="text-gray-300">{assignment.max_score}</dd></div>
-                  </dl>
-                </li>
-              ))}
-            </ul>
-          )}
+        <TeacherPageHeader title="Assignments" description="Create assignments and quizzes, review submissions, and provide feedback." />
+        <TeacherPanel title="Classroom work" description="Courses and submissions are restricted to class-subject combinations assigned to you.">
+          <TeacherAssignmentsManager
+            courses={validCourses.map((course) => ({ id: course.id, name: course.name }))}
+            assignments={assignments}
+            quizzes={quizzes}
+          />
         </TeacherPanel>
       </div>
     );

@@ -6,7 +6,7 @@ import {
   TeacherPageHeader,
   TeacherPanel,
 } from '@/components/dashboard/teacher-ui';
-import { requireTeacherContext } from '@/lib/teacher-dashboard';
+import { getTeacherAssignmentOptions, requireTeacherContext } from '@/lib/teacher-dashboard';
 
 export default async function TeacherClassesPage() {
   const context = await requireTeacherContext();
@@ -18,75 +18,58 @@ export default async function TeacherClassesPage() {
       </div>
     );
   }
-  const { supabase, teacherId, schoolId } = context;
+  const { supabase, schoolId } = context;
 
   return renderTeacherPageSafely('classes', async () => {
-    if (!schoolId) {
-      return (
-        <div className="space-y-6">
-          <TeacherPageHeader title="My Classes" description="Classes and subjects assigned to you." />
-          <TeacherEmptyState title="School assignment pending" description="Your classes will appear after a school is assigned to your account." />
-        </div>
-      );
-    }
+    const assignments = await getTeacherAssignmentOptions(context);
+    const classIds = [...new Set(assignments.map((assignment) => assignment.classId))];
+    const yearIds = [...new Set(assignments.map((assignment) => assignment.academicYearId))];
+    const allowedClassYears = new Set(assignments.map((assignment) => `${assignment.classId}:${assignment.academicYearId}`));
+    const { data: classes, error: classError } = classIds.length
+      ? await supabase.from('classes').select('id, name, code, description').eq('school_id', schoolId).in('id', classIds)
+      : { data: [], error: null };
+    if (classError) throw new Error(`Unable to load class details: ${classError.message}`);
 
-    const { data: assignments, error: assignmentError } = await supabase
-      .from('teacher_assignments')
-      .select('class_id, subject_id, academic_year_id')
-      .eq('teacher_id', teacherId);
+    const { data: enrollments, error: enrollmentError } = classIds.length
+      ? await supabase.from('student_enrollments').select('class_id, student_id, academic_year_id').in('class_id', classIds).in('academic_year_id', yearIds).eq('status', 'active')
+      : { data: [], error: null };
+    if (enrollmentError) throw new Error(`Unable to count active class enrollments: ${enrollmentError.message}`);
+    const studentIds = [...new Set((enrollments ?? []).map((row) => row.student_id))];
+    const { data: students, error: studentsError } = studentIds.length
+      ? await supabase.from('students').select('id').eq('school_id', schoolId).in('id', studentIds)
+      : { data: [], error: null };
+    if (studentsError) throw new Error(`Unable to verify class student totals: ${studentsError.message}`);
 
-    if (assignmentError) throw new Error(`Unable to load your teaching assignments: ${assignmentError.message}`);
-
-    const classIds = [...new Set((assignments ?? []).map((assignment) => assignment.class_id))];
-    const subjectIds = [...new Set((assignments ?? []).map((assignment) => assignment.subject_id))];
-    const academicYearIds = [...new Set((assignments ?? []).map((assignment) => assignment.academic_year_id))];
-
-    const [classResult, subjectResult, yearResult, enrollmentResult] =
-      classIds.length > 0
-        ? await Promise.all([
-            supabase.from('classes').select('id, name, code, description').eq('school_id', schoolId).in('id', classIds),
-            subjectIds.length > 0
-              ? supabase.from('subjects').select('id, name, code').eq('school_id', schoolId).in('id', subjectIds)
-              : Promise.resolve({ data: [], error: null }),
-            academicYearIds.length > 0
-              ? supabase.from('academic_years').select('id, name').eq('school_id', schoolId).in('id', academicYearIds)
-              : Promise.resolve({ data: [], error: null }),
-            supabase.from('student_enrollments').select('class_id').in('class_id', classIds).eq('status', 'active'),
-          ])
-        : [
-            { data: [], error: null },
-            { data: [], error: null },
-            { data: [], error: null },
-            { data: [], error: null },
-          ];
-
-    if (classResult.error) throw new Error(`Unable to load class details: ${classResult.error.message}`);
-    if (subjectResult.error) throw new Error(`Unable to load assigned subjects: ${subjectResult.error.message}`);
-    if (yearResult.error) throw new Error(`Unable to load academic years: ${yearResult.error.message}`);
-    if (enrollmentResult.error) throw new Error(`Unable to count active class enrollments: ${enrollmentResult.error.message}`);
-
-    const subjectsById = new Map((subjectResult.data ?? []).map((subject) => [subject.id, subject]));
-    const yearsById = new Map((yearResult.data ?? []).map((year) => [year.id, year.name]));
+    const validStudentIds = new Set((students ?? []).map((student) => student.id));
     const countsByClass = new Map<string, number>();
-    for (const enrollment of enrollmentResult.data ?? []) {
-      countsByClass.set(enrollment.class_id, (countsByClass.get(enrollment.class_id) ?? 0) + 1);
+    const countedStudents = new Set<string>();
+    for (const enrollment of enrollments ?? []) {
+      const key = `${enrollment.class_id}:${enrollment.student_id}`;
+      if (
+        validStudentIds.has(enrollment.student_id) &&
+        allowedClassYears.has(`${enrollment.class_id}:${enrollment.academic_year_id}`) &&
+        !countedStudents.has(key)
+      ) {
+        countsByClass.set(enrollment.class_id, (countsByClass.get(enrollment.class_id) ?? 0) + 1);
+        countedStudents.add(key);
+      }
     }
     const assignmentsByClass = new Map<string, typeof assignments>();
-    for (const assignment of assignments ?? []) {
-      const classAssignments = assignmentsByClass.get(assignment.class_id) ?? [];
-      classAssignments.push(assignment);
-      assignmentsByClass.set(assignment.class_id, classAssignments);
+    for (const assignment of assignments) {
+      const current = assignmentsByClass.get(assignment.classId) ?? [];
+      current.push(assignment);
+      assignmentsByClass.set(assignment.classId, current);
     }
 
     return (
       <div className="space-y-6">
         <TeacherPageHeader title="My Classes" description="Classes, subjects, and academic years assigned to you." />
         <TeacherPanel title="Assigned classes" description="Student totals reflect active enrollments in each assigned class.">
-          {!classResult.data?.length ? (
-            <TeacherEmptyState title="No classes assigned" description="Your school has not assigned any classes or subjects to you yet." />
+          {!classes?.length ? (
+            <TeacherEmptyState title="No classes assigned" description="Your school has not assigned any valid class and subject combinations to you yet." />
           ) : (
             <ul className="grid gap-4 md:grid-cols-2">
-              {classResult.data.map((classroom) => (
+              {classes.map((classroom) => (
                 <li key={classroom.id} className="rounded-xl border border-gray-800 bg-gray-950/60 p-4">
                   <div className="flex items-start gap-3">
                     <BookOpen aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 text-cyan-300" />
@@ -96,20 +79,15 @@ export default async function TeacherClassesPage() {
                     </div>
                   </div>
                   {classroom.description && <p className="mt-3 text-sm leading-6 text-gray-400">{classroom.description}</p>}
-                  <p className="mt-4 text-sm text-gray-300">
-                    {countsByClass.get(classroom.id) ?? 0} active students
-                  </p>
+                  <p className="mt-4 text-sm text-gray-300">{countsByClass.get(classroom.id) ?? 0} active students</p>
                   <div className="mt-4 border-t border-gray-800 pt-3">
                     <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Teaching assignments</p>
                     <ul className="mt-2 flex flex-wrap gap-2">
-                      {(assignmentsByClass.get(classroom.id) ?? []).map((assignment) => {
-                        const subject = subjectsById.get(assignment.subject_id);
-                        return (
-                          <li key={`${assignment.subject_id}:${assignment.academic_year_id}`} className="rounded-full border border-gray-700 px-2.5 py-1 text-xs text-gray-300">
-                            {subject?.name ?? 'Subject'}{yearsById.get(assignment.academic_year_id) ? ` · ${yearsById.get(assignment.academic_year_id)}` : ''}
-                          </li>
-                        );
-                      })}
+                      {(assignmentsByClass.get(classroom.id) ?? []).map((assignment) => (
+                        <li key={`${assignment.subjectId}:${assignment.academicYearId}`} className="rounded-full border border-gray-700 px-2.5 py-1 text-xs text-gray-300">
+                          {assignment.subjectName} · {assignment.academicYearName}
+                        </li>
+                      ))}
                     </ul>
                   </div>
                 </li>
