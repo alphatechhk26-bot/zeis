@@ -7,6 +7,7 @@ import {
   AdminStatCard,
   renderAdminPageSafely,
 } from '@/components/dashboard/admin-ui';
+import { ClassesManager } from '@/components/dashboard/classes-manager';
 import { requireAdminContext } from '@/lib/admin-dashboard';
 
 export default async function AdminClassesPage() {
@@ -14,128 +15,157 @@ export default async function AdminClassesPage() {
   if ('error' in context) {
     return (
       <div className="space-y-6">
-        <AdminPageHeader title="Classes" description="Review classes, active enrollments, and assigned teachers." />
+        <AdminPageHeader title="Classes" description="Manage classes and teacher assignments for your school." />
         <AdminErrorState />
       </div>
     );
   }
-  const { supabase, role, schoolId } = context;
+  const { supabase, schoolId } = context;
 
   return renderAdminPageSafely('classes', async () => {
-    if (role === 'admin' && !schoolId) {
+    if (!schoolId) {
       return (
         <div className="space-y-6">
-          <AdminPageHeader title="Classes" description="Review classes, active enrollments, and assigned teachers." />
-          <AdminEmptyState title="School assignment required" description="Your admin profile is not assigned to a school, so class records cannot be loaded." />
+          <AdminPageHeader title="Classes" description="Manage classes and teacher assignments for your school." />
+          <AdminEmptyState title="School assignment required" description="Your administrator profile must be assigned to a school before managing classes." />
         </div>
       );
     }
 
-    let classesQuery = supabase
-      .from('classes')
-      .select('id, name, code, description, school_id, is_active')
-      .order('name')
-      .limit(500);
-    if (role === 'admin' && schoolId) classesQuery = classesQuery.eq('school_id', schoolId);
+    const [classResult, teacherResult, subjectResult, yearResult] = await Promise.all([
+      supabase
+        .from('classes')
+        .select('id, name, code, description, school_id, is_active, created_at, updated_at')
+        .eq('school_id', schoolId)
+        .order('name')
+        .limit(500),
+      supabase
+        .from('teachers')
+        .select('id, employee_id, school_id')
+        .eq('school_id', schoolId)
+        .order('created_at', { ascending: false }),
+      supabase.from('subjects').select('id, name, school_id').eq('school_id', schoolId).order('name'),
+      supabase
+        .from('academic_years')
+        .select('id, name, school_id')
+        .eq('school_id', schoolId)
+        .order('start_date', { ascending: false }),
+    ]);
+    if (classResult.error) throw classResult.error;
+    if (teacherResult.error) throw teacherResult.error;
+    if (subjectResult.error) throw subjectResult.error;
+    if (yearResult.error) throw yearResult.error;
 
-    const { data: classes, error: classError } = await classesQuery;
-    if (classError) throw classError;
+    const classes = classResult.data ?? [];
+    const teacherIds = (teacherResult.data ?? []).map((teacher) => teacher.id);
+    const { data: teacherProfiles, error: profileError } = teacherIds.length
+      ? await supabase
+          .from('profiles')
+          .select('id, full_name, school_id')
+          .in('id', teacherIds)
+          .eq('school_id', schoolId)
+      : { data: [], error: null };
+    if (profileError) throw profileError;
 
-    const classIds = (classes ?? []).map((classroom) => classroom.id);
-    let assignments: Array<{ class_id: string; teacher_id: string; subject_id: string }> = [];
-    let enrollments: Array<{ class_id: string }> = [];
-    if (classIds.length > 0) {
-      const [assignmentResult, enrollmentResult] = await Promise.all([
-        supabase.from('teacher_assignments').select('class_id, teacher_id, subject_id').in('class_id', classIds),
-        supabase.from('student_enrollments').select('class_id').in('class_id', classIds).eq('status', 'active'),
-      ]);
-      if (assignmentResult.error) throw assignmentResult.error;
-      if (enrollmentResult.error) throw enrollmentResult.error;
-      assignments = assignmentResult.data ?? [];
-      enrollments = enrollmentResult.data ?? [];
-    }
+    const classIds = classes.map((row) => row.id);
+    const [assignmentResult, enrollmentResult] = classIds.length
+      ? await Promise.all([
+          supabase
+            .from('teacher_assignments')
+            .select('id, class_id, teacher_id, subject_id, academic_year_id')
+            .in('class_id', classIds),
+          supabase
+            .from('student_enrollments')
+            .select('class_id, student_id')
+            .in('class_id', classIds)
+            .eq('status', 'active'),
+        ])
+      : [
+          { data: [], error: null },
+          { data: [], error: null },
+        ];
+    if (assignmentResult.error) throw assignmentResult.error;
+    if (enrollmentResult.error) throw enrollmentResult.error;
 
-    const teacherIds = [...new Set(assignments.map((assignment) => assignment.teacher_id))];
-    let teachers: Array<{ id: string; employee_id: string | null; school_id: string }> = [];
-    if (teacherIds.length > 0) {
-      let teacherQuery = supabase.from('teachers').select('id, employee_id, school_id').in('id', teacherIds);
-      if (role === 'admin' && schoolId) teacherQuery = teacherQuery.eq('school_id', schoolId);
-      const { data, error } = await teacherQuery;
-      if (error) throw error;
-      teachers = data ?? [];
-    }
+    const enrolledStudentIds = [...new Set((enrollmentResult.data ?? []).map((row) => row.student_id))];
+    const { data: validStudents, error: studentError } = enrolledStudentIds.length
+      ? await supabase
+          .from('students')
+          .select('id')
+          .in('id', enrolledStudentIds)
+          .eq('school_id', schoolId)
+      : { data: [], error: null };
+    if (studentError) throw studentError;
+    const validStudentIds = new Set((validStudents ?? []).map((row) => row.id));
 
-    const validTeacherIds = teachers.map((teacher) => teacher.id);
-    let profiles: Array<{ id: string; full_name: string | null }> = [];
-    if (validTeacherIds.length > 0) {
-      let profileQuery = supabase.from('profiles').select('id, full_name, school_id').in('id', validTeacherIds);
-      if (role === 'admin' && schoolId) profileQuery = profileQuery.eq('school_id', schoolId);
-      const { data, error } = await profileQuery;
-      if (error) throw error;
-      profiles = data ?? [];
-    }
+    const assignmentRows = assignmentResult.data ?? [];
+    const assignedTeacherIds = [...new Set(assignmentRows.map((row) => row.teacher_id))];
+    const assignedSubjectIds = [...new Set(assignmentRows.map((row) => row.subject_id))];
+    const assignedYearIds = [...new Set(assignmentRows.map((row) => row.academic_year_id))];
+    const [assignedTeachersResult, assignedSubjectsResult, assignedYearsResult] = await Promise.all([
+      assignedTeacherIds.length
+        ? supabase.from('teachers').select('id, employee_id, school_id').in('id', assignedTeacherIds).eq('school_id', schoolId)
+        : Promise.resolve({ data: [], error: null }),
+      assignedSubjectIds.length
+        ? supabase.from('subjects').select('id, name, school_id').in('id', assignedSubjectIds).eq('school_id', schoolId)
+        : Promise.resolve({ data: [], error: null }),
+      assignedYearIds.length
+        ? supabase.from('academic_years').select('id, name, school_id').in('id', assignedYearIds).eq('school_id', schoolId)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    if (assignedTeachersResult.error) throw assignedTeachersResult.error;
+    if (assignedSubjectsResult.error) throw assignedSubjectsResult.error;
+    if (assignedYearsResult.error) throw assignedYearsResult.error;
 
-    const profileNameById = new Map(profiles.map((profile) => [profile.id, profile.full_name]));
+    const profileNameById = new Map((teacherProfiles ?? []).map((profile) => [profile.id, profile.full_name]));
     const teacherById = new Map(
-      teachers.map((teacher) => [
+      [...(assignedTeachersResult.data ?? [])].map((teacher) => [
         teacher.id,
-        profileNameById.get(teacher.id) ?? teacher.employee_id ?? 'Teacher details unavailable',
-      ]),
+        profileNameById.get(teacher.id) ?? teacher.employee_id ?? 'Teacher',
+      ])
     );
-    const countsByClass = new Map<string, number>();
-    for (const enrollment of enrollments) {
-      countsByClass.set(enrollment.class_id, (countsByClass.get(enrollment.class_id) ?? 0) + 1);
-    }
-    const teachersByClass = new Map<string, Set<string>>();
-    for (const assignment of assignments) {
-      if (!teacherById.has(assignment.teacher_id)) continue;
-      const assigned = teachersByClass.get(assignment.class_id) ?? new Set<string>();
-      assigned.add(teacherById.get(assignment.teacher_id)!);
-      teachersByClass.set(assignment.class_id, assigned);
-    }
-    const activeClassCount = (classes ?? []).filter((classroom) => classroom.is_active).length;
+    const subjectById = new Map((assignedSubjectsResult.data ?? []).map((subject) => [subject.id, subject.name]));
+    const yearById = new Map((assignedYearsResult.data ?? []).map((year) => [year.id, year.name]));
+    const classNameById = new Map(classes.map((row) => [row.id, row.name]));
+    const assignments = assignmentRows
+      .filter((row) =>
+        classNameById.has(row.class_id) &&
+        teacherById.has(row.teacher_id) &&
+        subjectById.has(row.subject_id) &&
+        yearById.has(row.academic_year_id)
+      )
+      .map((row) => ({
+        ...row,
+        teacher_name: teacherById.get(row.teacher_id)!,
+        subject_name: subjectById.get(row.subject_id)!,
+        academic_year_name: yearById.get(row.academic_year_id)!,
+      }));
+
+    const classesWithCounts = classes.map((row) => ({
+      ...row,
+      activeEnrollmentCount: (enrollmentResult.data ?? []).filter(
+        (enrollment) => enrollment.class_id === row.id && validStudentIds.has(enrollment.student_id)
+      ).length,
+    }));
 
     return (
       <div className="space-y-6">
-        <AdminPageHeader title="Classes" description="Review classes, active enrollments, and assigned teachers within your authorized scope." />
+        <AdminPageHeader title="Classes" description="Manage classes and teacher assignments within your authenticated school." />
         <section aria-label="Class summary" className="grid gap-4 sm:grid-cols-2">
-          <AdminStatCard label="Loaded classes" value={String(classes?.length ?? 0)} detail="Most recent records (up to 500)" icon={BookOpen} />
-          <AdminStatCard label="Active classes" value={String(activeClassCount)} detail="Among loaded records" icon={Users} />
+          <AdminStatCard label="Loaded classes" value={String(classes.length)} detail="Most recent records (up to 500)" icon={BookOpen} />
+          <AdminStatCard label="Active classes" value={String(classes.filter((row) => row.is_active).length)} detail="Among loaded records" icon={Users} />
         </section>
-        <AdminPanel title="Class directory" description="Student counts include active enrollment records.">
-          {!classes?.length ? (
-            <AdminEmptyState title="No classes found" description="Classes will appear here when the school has created them." />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[700px] text-left text-sm">
-                <thead className="border-b border-gray-800 text-xs uppercase tracking-wide text-gray-500">
-                  <tr>
-                    <th scope="col" className="pb-3 pr-4 font-medium">Class</th>
-                    <th scope="col" className="pb-3 pr-4 font-medium">Code</th>
-                    <th scope="col" className="pb-3 pr-4 font-medium">Students</th>
-                    <th scope="col" className="pb-3 pr-4 font-medium">Assigned teachers</th>
-                    <th scope="col" className="pb-3 font-medium">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-800">
-                  {classes.map((classroom) => (
-                    <tr key={classroom.id} className="align-top">
-                      <td className="py-3 pr-4">
-                        <p className="font-medium text-gray-100">{classroom.name}</p>
-                        {classroom.description && <p className="mt-1 max-w-xs text-xs text-gray-500">{classroom.description}</p>}
-                      </td>
-                      <td className="py-3 pr-4 text-gray-300">{classroom.code ?? '—'}</td>
-                      <td className="py-3 pr-4 text-gray-300">{countsByClass.get(classroom.id) ?? 0}</td>
-                      <td className="py-3 pr-4 text-gray-300">
-                        {[...(teachersByClass.get(classroom.id) ?? [])].join(', ') || 'No teacher assignment'}
-                      </td>
-                      <td className="py-3"><span className="rounded-full border border-gray-700 bg-gray-800/60 px-2.5 py-1 text-xs text-gray-200">{classroom.is_active ? 'Active' : 'Inactive'}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+        <AdminPanel title="Class directory" description="Teacher assignments and enrollment counts are restricted to this school.">
+          <ClassesManager
+            initialClasses={classesWithCounts}
+            initialAssignments={assignments}
+            teachers={(teacherResult.data ?? []).map((teacher) => ({
+              id: teacher.id,
+              label: profileNameById.get(teacher.id) ?? teacher.employee_id ?? 'Teacher',
+            }))}
+            subjects={(subjectResult.data ?? []).map((subject) => ({ id: subject.id, label: subject.name }))}
+            academicYears={(yearResult.data ?? []).map((year) => ({ id: year.id, label: year.name }))}
+          />
         </AdminPanel>
       </div>
     );

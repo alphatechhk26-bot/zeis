@@ -4,6 +4,11 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import {
+  assignTeacherToClassSubject as assignSchoolTeacher,
+  createStudent as createSchoolStudent,
+  createTeacher as createSchoolTeacher,
+} from '@/actions/school-admin';
 
 // ----------------------------------------------------------------------
 // Helpers & Utilities
@@ -40,12 +45,6 @@ async function assertAdmin() {
   return { userId: user.id, role: userRole, schoolId };
 }
 
-function generateRegistrationNumber(): string {
-  const year = new Date().getFullYear();
-  const random = Math.floor(100000 + Math.random() * 900000);
-  return `STU-${year}-${random}`;
-}
-
 // ----------------------------------------------------------------------
 // Zod Schemas
 // ----------------------------------------------------------------------
@@ -62,30 +61,33 @@ const updateSchoolSchema = schoolSchema.partial().extend({
 });
 
 const createStudentSchema = z.object({
-  school_id: z.string().uuid('Invalid school ID.'),
-  full_name: z.string().min(1, 'Full name is required.'),
-  email: z.string().email('Invalid email address.'),
-  password: z.string().min(8, 'Password must be at least 8 characters.'),
-  enrollment_date: z.string().optional(),
-  status: z.enum(['active', 'transferred', 'graduated', 'withdrawn', 'suspended']).default('active'),
-});
+  full_name: z.string().trim().min(1).max(255),
+  email: z.string().trim().email().max(254),
+  password: z.string().min(8),
+  admission_number: z.string().trim().min(1).max(50),
+  enrollment_date: z.string(),
+  status: z.enum(['active', 'transferred', 'graduated', 'withdrawn', 'suspended']),
+  class_id: z.string().uuid(),
+  academic_year_id: z.string().uuid(),
+  term_id: z.string().uuid().nullable(),
+  stream_id: z.string().uuid().nullable(),
+}).strict();
 
 const createTeacherSchema = z.object({
-  school_id: z.string().uuid('Invalid school ID.'),
-  full_name: z.string().min(1, 'Full name is required.'),
-  email: z.string().email('Invalid email address.'),
-  password: z.string().min(8, 'Password must be at least 8 characters.'),
-  employee_id: z.string().optional(),
-  hire_date: z.string().optional(),
-  status: z.enum(['active', 'inactive', 'archived']).default('active'),
-});
+  full_name: z.string().trim().min(1).max(255),
+  email: z.string().trim().email().max(254),
+  password: z.string().min(8),
+  employee_id: z.string().trim().max(100).nullable(),
+  hire_date: z.string().nullable(),
+  status: z.enum(['active', 'inactive', 'archived']),
+}).strict();
 
 const assignTeacherSchema = z.object({
-  teacher_id: z.string().uuid('Invalid teacher ID.'),
-  class_id: z.string().uuid('Invalid class ID.'),
-  subject_id: z.string().uuid('Invalid subject ID.'),
-  academic_year_id: z.string().uuid('Invalid academic year ID.'),
-});
+  teacher_id: z.string().uuid(),
+  class_id: z.string().uuid(),
+  subject_id: z.string().uuid(),
+  academic_year_id: z.string().uuid(),
+}).strict();
 
 // ----------------------------------------------------------------------
 // Actions
@@ -151,198 +153,41 @@ export async function updateSchool(input: z.infer<typeof updateSchoolSchema>) {
 }
 
 export async function createStudent(input: z.infer<typeof createStudentSchema>) {
-  const { userId, role } = await assertAdmin();
   const validated = createStudentSchema.parse(input);
-  const supabase = (await createClient()) as any;
-
-  if (role === 'admin') {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('school_id')
-      .eq('id', userId)
-      .single();
-
-    if (!profile || (profile as Record<string, any>).school_id !== validated.school_id) {
-      throw new Error('You can only create students for your own school.');
-    }
-  }
-
-  const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+  return createSchoolStudent({
+    fullName: validated.full_name,
     email: validated.email,
     password: validated.password,
-    email_confirm: true,
-    user_metadata: { full_name: validated.full_name },
+    admissionNumber: validated.admission_number,
+    enrollmentDate: validated.enrollment_date,
+    status: validated.status,
+    classId: validated.class_id,
+    academicYearId: validated.academic_year_id,
+    termId: validated.term_id,
+    streamId: validated.stream_id,
   });
-
-  if (authError) throw new Error(`Failed to create user: ${authError.message}`);
-
-  const userId_new = authData.user.id;
-
-  const { error: profileError } = await supabase
-    .from('profiles')
-    .insert({
-      id: userId_new,
-      school_id: validated.school_id,
-      role: 'student',
-      full_name: validated.full_name,
-    });
-
-  if (profileError) {
-    await supabase.auth.admin.deleteUser(userId_new);
-    throw new Error(`Failed to create profile: ${profileError.message}`);
-  }
-
-  const regNumber = generateRegistrationNumber();
-  const { error: studentError } = await supabase
-    .from('students')
-    .insert({
-      id: userId_new,
-      school_id: validated.school_id,
-      admission_number: regNumber,
-      enrollment_date: validated.enrollment_date || new Date().toISOString().split('T')[0],
-      status: validated.status,
-    });
-
-  if (studentError) {
-    await supabase.from('profiles').delete().eq('id', userId_new);
-    await supabase.auth.admin.deleteUser(userId_new);
-    throw new Error(`Failed to create student record: ${studentError.message}`);
-  }
-
-  revalidatePath('/admin/students');
-  return { success: true, data: { user_id: userId_new, admission_number: regNumber } };
 }
 
 export async function createTeacher(input: z.infer<typeof createTeacherSchema>) {
-  const { userId, role } = await assertAdmin();
   const validated = createTeacherSchema.parse(input);
-  const supabase = (await createClient()) as any;
-
-  if (role === 'admin') {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('school_id')
-      .eq('id', userId)
-      .single();
-
-    if (!profile || (profile as Record<string, any>).school_id !== validated.school_id) {
-      throw new Error('You can only create teachers for your own school.');
-    }
-  }
-
-  const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+  return createSchoolTeacher({
+    fullName: validated.full_name,
     email: validated.email,
     password: validated.password,
-    email_confirm: true,
-    user_metadata: { full_name: validated.full_name },
+    employeeId: validated.employee_id,
+    hireDate: validated.hire_date,
+    status: validated.status,
   });
-
-  if (authError) throw new Error(`Failed to create user: ${authError.message}`);
-
-  const userId_new = authData.user.id;
-
-  const { error: profileError } = await supabase
-    .from('profiles')
-    .insert({
-      id: userId_new,
-      school_id: validated.school_id,
-      role: 'teacher',
-      full_name: validated.full_name,
-    });
-
-  if (profileError) {
-    await supabase.auth.admin.deleteUser(userId_new);
-    throw new Error(`Failed to create profile: ${profileError.message}`);
-  }
-
-  const { error: teacherError } = await supabase
-    .from('teachers')
-    .insert({
-      id: userId_new,
-      school_id: validated.school_id,
-      employee_id: validated.employee_id || null,
-      hire_date: validated.hire_date || null,
-      status: validated.status,
-    });
-
-  if (teacherError) {
-    await supabase.from('profiles').delete().eq('id', userId_new);
-    await supabase.auth.admin.deleteUser(userId_new);
-    throw new Error(`Failed to create teacher record: ${teacherError.message}`);
-  }
-
-  revalidatePath('/admin/teachers');
-  return { success: true, data: { user_id: userId_new } };
 }
 
 export async function assignTeacherToClassSubject(input: z.infer<typeof assignTeacherSchema>) {
-  const { userId, role } = await assertAdmin();
   const validated = assignTeacherSchema.parse(input);
-  const supabase = (await createClient()) as any;
-
-  if (role === 'admin') {
-    const { data: adminProfile } = await supabase
-      .from('profiles')
-      .select('school_id')
-      .eq('id', userId)
-      .single();
-
-    if (!adminProfile) throw new Error('Admin profile not found.');
-
-    const { data: teacher } = await supabase
-      .from('teachers')
-      .select('school_id')
-      .eq('id', validated.teacher_id)
-      .single();
-
-    if (!teacher || (teacher as Record<string, any>).school_id !== (adminProfile as Record<string, any>).school_id) {
-      throw new Error('Teacher does not belong to your school.');
-    }
-
-    const { data: classData } = await supabase
-      .from('classes')
-      .select('school_id')
-      .eq('id', validated.class_id)
-      .single();
-
-    if (!classData || (classData as Record<string, any>).school_id !== (adminProfile as Record<string, any>).school_id) {
-      throw new Error('Class does not belong to your school.');
-    }
-
-    const { data: yearData } = await supabase
-      .from('academic_years')
-      .select('school_id')
-      .eq('id', validated.academic_year_id)
-      .single();
-
-    if (!yearData || (yearData as Record<string, any>).school_id !== (adminProfile as Record<string, any>).school_id) {
-      throw new Error('Academic year does not belong to your school.');
-    }
-
-    const { data: subjectData } = await supabase
-      .from('subjects')
-      .select('school_id')
-      .eq('id', validated.subject_id)
-      .single();
-
-    if (!subjectData || (subjectData as Record<string, any>).school_id !== (adminProfile as Record<string, any>).school_id) {
-      throw new Error('Subject does not belong to your school.');
-    }
-  }
-
-  const { error } = await supabase
-    .from('teacher_assignments')
-    .insert({
-      teacher_id: validated.teacher_id,
-      class_id: validated.class_id,
-      subject_id: validated.subject_id,
-      academic_year_id: validated.academic_year_id,
-    });
-
-  if (error) throw new Error(`Failed to assign teacher: ${error.message}`);
-
-  revalidatePath('/admin/assignments');
-  return { success: true, message: 'Teacher assigned successfully.' };
+  return assignSchoolTeacher({
+    teacherId: validated.teacher_id,
+    classId: validated.class_id,
+    subjectId: validated.subject_id,
+    academicYearId: validated.academic_year_id,
+  });
 }
 // actions/admin.ts
 
